@@ -6,7 +6,11 @@
 
 无论胜利还是失败，游戏都会在结局告诉玩家标错和标对了哪些雷。
 
-原生 Windows 程序，Zig + Win32，没有第三方库和运行依赖。
+本仓库目前只包含游戏逻辑（C++20，见 `cpp/`），不含 GUI，没有第三方库。
+
+构建并运行规则自检：
+
+    cmake -S cpp -B cpp/build && cmake --build cpp/build && ./cpp/build/game_test
 
 
 
