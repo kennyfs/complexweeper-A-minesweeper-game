@@ -95,7 +95,6 @@ on it.
 | `tools/tune_mines.py` | tunes the number of mines for a target win rate |
 | `assets/sprites.json` | the vector sprites used by the GUI and the web version (generated) |
 | `tools/make_sprites.py` | draws the sprites in code and writes `assets/sprites.json` and `web/sprites-data.js` |
-| `素材/` | the old pixel-art atlas, no longer used by the code (see the asset notice below) |
 
 ## Getting started
 
@@ -196,7 +195,7 @@ python3 tools/tune_mines.py --total-threads 12 --json tuned.json --log tuning_lo
 All configurations share one hard budget of worker threads. Every evaluation is appended to the
 log, so a partial run is not lost. Use `--targets` to choose other target win rates.
 
-## Assets, credits and license
+## Graphics and license
 
 The code is licensed under GPL-3.0 (see `LICENSE`).
 
@@ -204,10 +203,6 @@ The graphics are vector shapes drawn in code by `tools/make_sprites.py` (cells, 
 mines, faces and LED digits, with a small built-in stroke font). They are original work and covered
 by GPL-3.0 together with the code. After editing the script, run `python3 tools/make_sprites.py`
 to regenerate the two data files.
-
-The old pixel-art atlas in `素材/` is not used any more. It is kept for reference; part of it (the
-original Minesweeper graphics) belongs to Microsoft and is **not** covered by GPL-3.0, so read the
-asset notice (`素材说明.md`, in Chinese) before reusing it.
 
 This program is an independent reimplementation. It is not affiliated with, authorized by or
 endorsed by Microsoft. "Minesweeper" and related trademarks belong to their respective owners.
