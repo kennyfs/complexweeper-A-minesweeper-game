@@ -37,19 +37,25 @@ struct Preset {
     std::string_view label;
 };
 
-// The three difficulties of each mode. The mine counts are meant to make the solver win about half
-// of its games at every size and in both modes (see tools/tune_mines.py). PROVISIONAL: these are
-// the values of a quick local run (300 games per size, 95% CI contains 50%); replace them with
-// the output of a full tuning run.
+// The three difficulties of each mode. The mine counts were tuned with tools/tune_mines.py so that
+// the solver wins about 90% (Beginner), 80% (Intermediate) and 70% (Expert) of its games. A human
+// wins less often than the solver, since the solver guesses at the lowest risk and also finds a
+// consistent flag labeling perfectly. Measured with 2000-4000 games each (95% Wilson interval):
+//   complex    Beginner  7 mines 92.0% [91.1, 92.8]   Intermediate 24 mines 81.8% [80.0, 83.4]
+//              Expert   47 mines 69.0% [66.9, 70.9]
+//   Minkowski  Beginner  8 mines 87.5% [86.4, 88.4]   Intermediate 25 mines 79.0% [77.2, 80.7]
+//              Expert   47 mines 70.1% [68.1, 72.1]
+// A Beginner board has only 81 cells, so one mine more or less moves the win rate by about 5
+// points; these are the counts closest to 90%.
 inline constexpr std::array<Preset, 3> PRESETS_COMPLEX{{
-    {9, 9, 12, "Beginner"},
-    {16, 16, 32, "Intermediate"},
-    {30, 16, 54, "Expert"},
+    {9, 9, 7, "Beginner"},
+    {16, 16, 24, "Intermediate"},
+    {30, 16, 47, "Expert"},
 }};
 inline constexpr std::array<Preset, 3> PRESETS_HYPER{{
-    {9, 9, 12, "Beginner"},
-    {16, 16, 32, "Intermediate"},
-    {30, 16, 54, "Expert"},
+    {9, 9, 8, "Beginner"},
+    {16, 16, 25, "Intermediate"},
+    {30, 16, 47, "Expert"},
 }};
 constexpr const std::array<Preset, 3>& presets(Mode mode) {
     return mode == Mode::hyper ? PRESETS_HYPER : PRESETS_COMPLEX;
