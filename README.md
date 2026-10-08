@@ -91,8 +91,11 @@ on it.
 | `cpp/tests/` | the rule tests and the solver tests |
 | `cpp/tools/winrate.cpp` | multithreaded win-rate measurement of the solver |
 | `gui/` | the tkinter GUI (Python, talks to the C++ library through `ctypes`) |
+| `web/` | the static web version (plain HTML/CSS/JS, no build step; a JavaScript port of `cpp/src`) |
 | `tools/tune_mines.py` | tunes the number of mines for a target win rate |
-| `素材/` | the sprite atlas used by the GUI (see the asset notice below) |
+| `assets/sprites.json` | the vector sprites used by the GUI and the web version (generated) |
+| `tools/make_sprites.py` | draws the sprites in code and writes `assets/sprites.json` and `web/sprites-data.js` |
+| `素材/` | the old pixel-art atlas, no longer used by the code (see the asset notice below) |
 
 ## Getting started
 
@@ -117,6 +120,19 @@ The first run builds the C++ library with CMake. In the window:
   looks the same.
 * Keys: Right = step, Left = undo, Space = auto play, F2 = new game.
 * The window never changes size; the zoom is limited to what fits.
+
+### Run the web version
+
+`web/` is a static site: open `web/index.html` in a browser, or publish the folder as it is (for
+example with GitHub Pages). It works on desktop and on a phone. The game, the solver and the undo
+history are a JavaScript port of the C++ code (`web/engine.js`); the same seed gives the same
+board and the solver makes the same moves. On a touch screen use the Open / Flag switch, tap a
+number to chord, and long-press to flag.
+
+```bash
+python3 -m http.server -d web 8000   # optional: serve it locally
+python3 web/tests/crosscheck.py 20   # compare the JavaScript engine with the C++ library
+```
 
 ### Run the tests
 
@@ -184,15 +200,14 @@ log, so a partial run is not lost. Use `--targets` to choose other target win ra
 
 The code is licensed under GPL-3.0 (see `LICENSE`).
 
-The graphics come in two kinds with different rights; read the asset notice (`素材说明.md`, in
-Chinese) before redistributing or using them commercially.
+The graphics are vector shapes drawn in code by `tools/make_sprites.py` (cells, numbers, flags,
+mines, faces and LED digits, with a small built-in stroke font). They are original work and covered
+by GPL-3.0 together with the code. After editing the script, run `python3 tools/make_sprites.py`
+to regenerate the two data files.
 
-* The original Minesweeper graphics (buttons, flags, mines and their variants) belong to
-  Microsoft; the original game was written by Robert Donner and Curt Johnson. They are **not**
-  covered by the GPL-3.0 license of this repository.
-* The new graphics (the number sprites, the four flags, the LED digits with the `i` and `j`
-  units, the faces) and the program icon were drawn by Qingyuexiao (青月晓) and are released under
-  GPL-3.0 together with the code.
+The old pixel-art atlas in `素材/` is not used any more. It is kept for reference; part of it (the
+original Minesweeper graphics) belongs to Microsoft and is **not** covered by GPL-3.0, so read the
+asset notice (`素材说明.md`, in Chinese) before reusing it.
 
 This program is an independent reimplementation. It is not affiliated with, authorized by or
 endorsed by Microsoft. "Minesweeper" and related trademarks belong to their respective owners.

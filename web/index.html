@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Complexweeper</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='46' fill='%23ffcf3f'/%3E%3Ccircle cx='34' cy='40' r='7' fill='%231f2430'/%3E%3Ccircle cx='66' cy='40' r='7' fill='%231f2430'/%3E%3Cpath d='M28 58q22 22 44 0' stroke='%231f2430' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="window" id="window">
+  <h1>Complexweeper</h1>
+
+  <form class="settings" id="settings" autocomplete="off" onsubmit="return false">
+    <label>Mode
+      <select id="mode">
+        <option value="0">Circular complex (i² = −1)</option>
+        <option value="1">Minkowski (j² = +1)</option>
+      </select>
+    </label>
+    <label>Level
+      <select id="level">
+        <option value="0">Beginner</option>
+        <option value="1">Intermediate</option>
+        <option value="2">Expert</option>
+      </select>
+    </label>
+    <label>Seed <input id="seed" type="text" inputmode="numeric" size="11" spellcheck="false"></label>
+    <button type="button" id="new-btn" class="btn">New game</button>
+    <label class="check"><input type="checkbox" id="orient"> Random flag orientation</label>
+  </form>
+
+  <section class="game" id="game">
+    <div class="header sunken" id="header">
+      <canvas class="led" id="mine-led" aria-label="Mines left"></canvas>
+      <button type="button" id="face" class="face" aria-label="New game"><canvas id="face-canvas"></canvas></button>
+      <canvas class="led" id="time-led" aria-label="Time"></canvas>
+    </div>
+    <div class="board-wrap sunken" id="board-wrap">
+      <canvas id="board" aria-label="Game board"></canvas>
+    </div>
+  </section>
+
+  <div class="toolbar">
+    <div class="segmented" role="group" aria-label="Touch action">
+      <button type="button" id="tool-open" class="btn on" title="Tap opens a cell; tap a number to chord">⛏ Open</button>
+      <button type="button" id="tool-flag" class="btn" title="Tap cycles the flag">⚑ Flag</button>
+    </div>
+    <button type="button" id="undo" class="btn">◀ Undo</button>
+    <button type="button" id="step" class="btn">Step ▶</button>
+    <button type="button" id="auto" class="btn">Auto play</button>
+    <label class="delay">Delay <input type="range" id="delay" min="30" max="1500" value="400"> <output id="delay-out">400</output> ms</label>
+  </div>
+
+  <p class="status" id="status" aria-live="polite"></p>
+
+  <details class="help">
+    <summary>How to play</summary>
+    <p>The number on a cell is the modulus of the sum of the mines around it. Every mine is one of
+    +1, −1, +i, −i (in the Minkowski mode +j, −j, with j² = +1 and the modulus √(a² − b²), so
+    numbers can be imaginary). You win when the flags sit exactly on the mines <em>and</em> the flags
+    around every open number add up to that number.</p>
+    <ul>
+      <li><b>Mouse:</b> left click opens, right click cycles the flag (none, +1, −1, +i/+j, −i/−j),
+      middle click or Shift + click chords an open number.</li>
+      <li><b>Touch:</b> use the Open / Flag switch; in Open mode tap a number to chord. A long press
+      always flags.</li>
+      <li><b>Keys:</b> → solver step, ← undo, Space auto play, F2 new game.</li>
+      <li><b>Solver:</b> Step lets the solver make one move and explains it; Undo takes back any move.</li>
+    </ul>
+    <p class="fine">All graphics are drawn in code (see <code>tools/make_sprites.py</code>) and released under GPL-3.0 with the rest of the project.</p>
+  </details>
+</main>
+
+<script src="sprites-data.js"></script>
+<script src="engine.js"></script>
+<script src="sprites.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

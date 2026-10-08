@@ -1,0 +1,136 @@
+/* Minimal light theme. */
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --line: #dfe2e8;
+  --ink: #1f2430;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --board: #e4e6ea;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  padding: 16px 8px;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 var(--font);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.window {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(20, 24, 33, .05), 0 8px 24px rgba(20, 24, 33, .06);
+  padding: 16px 16px 14px;
+  max-width: 100%;
+}
+
+h1 { margin: 0 0 12px; font-size: 17px; font-weight: 600; letter-spacing: .01em; }
+
+/* ---- settings row */
+.settings { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 14px; }
+.settings label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--muted); }
+.settings .check { color: var(--ink); }
+
+select, input[type="text"] {
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  min-height: 32px;
+}
+input[type="text"] { width: 9em; font-variant-numeric: tabular-nums; }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+input[type="range"] { accent-color: var(--accent); }
+
+.btn {
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 12px;
+  min-height: 32px;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background .12s, border-color .12s;
+}
+.btn:hover:not(:disabled) { background: #f3f4f6; }
+.btn:active:not(:disabled) { background: #e8eaee; }
+.btn.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+.btn:disabled { color: #b4b9c3; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- game area */
+.game { width: fit-content; max-width: 100%; margin: 0 auto; }
+
+.header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+
+.led { display: block; border-radius: 6px; }
+
+.face { padding: 0; border: 0; background: none; line-height: 0; cursor: pointer; border-radius: 50%; touch-action: manipulation; }
+.face canvas { display: block; transition: transform .1s; }
+.face:active canvas { transform: scale(.94); }
+
+.board-wrap {
+  background: var(--board);
+  border-radius: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  line-height: 0;
+}
+#board {
+  display: block;
+  touch-action: pan-x pan-y;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---- solver bar, status, help */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin-top: 14px; }
+.segmented { display: inline-flex; }
+.segmented .btn:first-child { border-radius: 8px 0 0 8px; }
+.segmented .btn:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+.delay { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--muted); }
+.delay input { width: 110px; }
+.delay output { display: inline-block; min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+
+.status {
+  margin: 12px 0 0;
+  min-height: 4.6em;  /* three lines: long messages never move the layout */
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.help { margin-top: 10px; color: var(--muted); max-width: 62em; }
+.help summary { cursor: pointer; user-select: none; }
+.help p, .help ul { margin: 8px 0; }
+.help ul { padding-left: 1.3em; }
+.help .fine { font-size: 12px; }
+code { font-size: .95em; }
+
+@media (max-width: 560px) {
+  body { padding: 8px 4px; font-size: 15px; }
+  .window { padding: 12px 10px; border-radius: 12px; }
+  .settings label:not(.check) { flex: 1 1 100%; }
+  .settings select, .settings input[type="text"] { flex: 1; min-width: 0; }
+  .btn { min-height: 38px; }
+  .delay { flex: 1 1 100%; justify-content: center; }
+}

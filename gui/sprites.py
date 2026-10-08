@@ -1,4 +1,4 @@
-"""Sprite atlas loading and the rules for picking a sprite for each cell.
+"""Sprite loading and the rules for picking a sprite for each cell.
 
 Everything here is independent of Tk, so it can be tested (and used to render board snapshots)
 without opening a window.
@@ -6,42 +6,73 @@ without opening a window.
 import json
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
-# The asset directory and file names are the repository's existing paths.
-ATLAS_DIR = ROOT / "素材"
-ATLAS_PNG = ATLAS_DIR / "图集.png"
-ATLAS_JSON = ATLAS_DIR / "图集.json"
+# The vector sprites are drawn by tools/make_sprites.py.
+SPRITES_JSON = ROOT / "assets" / "sprites.json"
+SUPERSAMPLE = 4
 
 
 class Atlas:
-    """The sprite sheet: a PNG plus a JSON table of named rectangles."""
+    """The vector sprites: named lists of simple shapes, rasterized at the size asked for."""
 
-    def __init__(self, png=ATLAS_PNG, table=ATLAS_JSON):
-        self.image = Image.open(png).convert("RGBA")
+    def __init__(self, table=SPRITES_JSON):
         with open(table, encoding="utf-8") as f:
-            slots = json.load(f)["slots"]
-        self.slots = {s["name"]: (s["x"], s["y"], s["w"], s["h"]) for s in slots}
+            data = json.load(f)
+        self.sprites = data["sprites"]
+        self.board_color = data["board"]
         self._cache = {}
 
     def has(self, name):
-        return name in self.slots
+        return name in self.sprites
+
+    def size(self, name):
+        """The native size of a sprite in pixels (at zoom 1)."""
+        s = self.sprites[name]
+        return s["w"], s["h"]
 
     def sprite(self, name):
-        """The sprite at its native size, as an RGBA image."""
-        if name not in self._cache:
-            self._cache[name] = self._crop(name)
-        return self._cache[name]
+        return self.scaled(name, 1)
 
     def scaled(self, name, zoom):
-        """The sprite enlarged by an integer factor with nearest-neighbor scaling."""
-        img = self.sprite(name)
-        return img if zoom == 1 else img.resize((img.width * zoom, img.height * zoom), Image.NEAREST)
+        """The sprite at `zoom` times its native size, as an RGBA image."""
+        key = (name, zoom)
+        if key not in self._cache:
+            self._cache[key] = self._render(name, zoom)
+        return self._cache[key]
 
-    def _crop(self, name):
-        x, y, w, h = self.slots[name]
-        return self.image.crop((x, y, x + w, y + h))
+    def _render(self, name, zoom):
+        spec = self.sprites[name]
+        w, h = spec["w"] * zoom, spec["h"] * zoom
+        k = SUPERSAMPLE * w / spec["vw"]  # virtual unit -> supersampled pixel
+        img = Image.new("RGBA", (w * SUPERSAMPLE, h * SUPERSAMPLE), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        for item in spec["items"]:
+            kind = item[0]
+            if kind == "rect":
+                _, x, y, rw, rh, r, fill = item
+                draw.rounded_rectangle([x * k, y * k, (x + rw) * k - 1, (y + rh) * k - 1], radius=r * k, fill=fill)
+            elif kind == "circle":
+                _, cx, cy, r, fill = item
+                draw.ellipse([(cx - r) * k, (cy - r) * k, (cx + r) * k, (cy + r) * k], fill=fill)
+            elif kind == "poly":
+                pts = item[1]
+                draw.polygon([(pts[i] * k, pts[i + 1] * k) for i in range(0, len(pts), 2)], fill=item[2])
+            elif kind == "ring":
+                _, cx, cy, r, lw, color = item
+                draw.ellipse([(cx - r) * k, (cy - r) * k, (cx + r) * k, (cy + r) * k], outline=color, width=max(1, round(lw * k)))
+            elif kind == "path":
+                _, pts, lw, color, closed = item
+                points = [(pts[i] * k, pts[i + 1] * k) for i in range(0, len(pts), 2)]
+                if closed:
+                    points.append(points[0])
+                width = max(1, round(lw * k))
+                draw.line(points, fill=color, width=width, joint="curve")
+                r = width / 2  # round caps and joins
+                for x, y in points:
+                    draw.ellipse([x - r, y - r, x + r, y + r], fill=color)
+        return img.resize((w, h), Image.LANCZOS)
 
 
 def _typed(prefix, kind, hyper):
@@ -51,15 +82,9 @@ def _typed(prefix, kind, hyper):
 
 
 def number_name(value, hyper, atlas):
-    """Sprite name for the number shown on an open cell with displayed value `value`."""
-    if value == 0:
-        return "num_0"
-    if value < 0:
-        return f"hnum_{-value}_i"  # negative values only occur in Minkowski mode
-    plain = f"num_{value}"
-    if atlas.has(plain):
-        return plain
-    return f"hnum_{value}"
+    """Sprite name for the number shown on an open cell with displayed value `value`
+    (the square of the modulus; negative values only occur in Minkowski mode)."""
+    return f"num_m{-value}" if value < 0 else f"num_{value}"
 
 
 def cell_sprite(cell, index, hyper, over, boom, atlas):
@@ -93,8 +118,9 @@ def cell_sprite(cell, index, hyper, over, boom, atlas):
 def render_board(cells, width, height, hyper, over, boom, atlas, zoom=2):
     """Compose the whole board into one image (used for snapshots in tests)."""
     cs = 16 * zoom
-    img = Image.new("RGBA", (width * cs, height * cs))
+    img = Image.new("RGBA", (width * cs, height * cs), atlas.board_color)
     for i, c in enumerate(cells):
         name = cell_sprite(c, i, hyper, over, boom, atlas)
-        img.paste(atlas.scaled(name, zoom), ((i % width) * cs, (i // width) * cs))
+        sp = atlas.scaled(name, zoom)
+        img.paste(sp, ((i % width) * cs, (i // width) * cs), sp)
     return img

@@ -17,6 +17,7 @@ import argparse
 import base64
 import io
 import random
+import secrets
 import sys
 import time
 import tkinter as tk
@@ -68,12 +69,12 @@ def type_name(flag_type, mode):
 
 
 class Led:
-    """A three-digit LED display built from the atlas digits."""
+    """A three-digit LED display built from the vector digits."""
 
     def __init__(self, parent, app):
         self.app = app
-        self.frame = tk.Frame(parent, bg="black", bd=2, relief="sunken")
-        self.labels = [tk.Label(self.frame, bd=0, bg="black") for _ in range(3)]
+        self.frame = tk.Frame(parent, bg="#16181d", bd=0)
+        self.labels = [tk.Label(self.frame, bd=0, bg="#16181d") for _ in range(3)]
         for lab in self.labels:
             lab.pack(side="left")
         self.text = None
@@ -112,6 +113,8 @@ class App:
         self.mode_var = tk.StringVar(value=MODE_NAMES[MODE_COMPLEX])
         self.level_var = tk.StringVar(value="Beginner")
         self.seed_var = tk.StringVar()
+        self.game_seed = None  # the seed the current game was generated from
+        self.new_text = tk.StringVar(value="New game")
         self.zoom_var = tk.StringVar(value=str(self.zoom))
         self.delay_var = tk.IntVar(value=400)
         self.orient_var = tk.BooleanVar(value=False)
@@ -137,9 +140,11 @@ class App:
             box.bind("<<ComboboxSelected>>", lambda _e: self.new_game())
         ttk.Label(top, text="Seed").pack(side="left")
         ttk.Entry(top, textvariable=self.seed_var, width=11).pack(side="left", padx=(4, 8))
-        ttk.Button(top, text="New game", command=self.new_game).pack(side="left")
+        self.new_btn = ttk.Button(top, textvariable=self.new_text, width=14, command=self.on_new_button)
+        self.new_btn.pack(side="left")
+        self.seed_var.trace_add("write", lambda *_: self.update_new_button())
 
-        self.header = tk.Frame(self.root, width=AREA_W, height=HEADER_H, bd=2, relief="groove")
+        self.header = tk.Frame(self.root, width=AREA_W, height=HEADER_H, bd=0)
         self.header.grid(row=1, column=0, padx=8)
         self.header.grid_propagate(False)
         self.header.pack_propagate(False)
@@ -149,9 +154,9 @@ class App:
         self.time_led.frame.place(relx=1.0, x=-6, rely=0.5, anchor="e")
         self.face = tk.Label(self.header, bd=0)
         self.face.place(relx=0.5, rely=0.5, anchor="center")
-        self.face.bind("<Button-1>", lambda _e: self.new_game())
+        self.face.bind("<Button-1>", lambda _e: self.new_random_game())
 
-        self.canvas = tk.Canvas(self.root, width=AREA_W, height=AREA_H, highlightthickness=0, bd=0, bg="#9a9a9a")
+        self.canvas = tk.Canvas(self.root, width=AREA_W, height=AREA_H, highlightthickness=0, bd=0, bg=self.atlas.board_color)
         self.canvas.grid(row=2, column=0, padx=8, pady=(4, 4))
         self.canvas.bind("<ButtonRelease-1>", self.on_left)
         self.canvas.bind("<Button-3>", self.on_right)
@@ -204,7 +209,7 @@ class App:
         self.root.bind("<Right>", guard(self.step))
         self.root.bind("<Left>", guard(self.undo))
         self.root.bind("<space>", guard(self.toggle_auto))
-        self.root.bind("<F2>", lambda _e: self.new_game())
+        self.root.bind("<F2>", lambda _e: self.new_random_game())
 
     # ------------------------------------------------------------------ sprites
     def photo(self, name, zoom=None):
@@ -221,15 +226,43 @@ class App:
     def current_mode(self):
         return MODE_HYPER if self.mode_var.get() == MODE_NAMES[MODE_HYPER] else MODE_COMPLEX
 
+    def typed_seed(self):
+        """The seed in the entry box, or None if it is not a number."""
+        try:
+            return int(self.seed_var.get())
+        except ValueError:
+            return None
+
+    def update_new_button(self):
+        """The button generates the typed seed if the game came from another seed, else a new game."""
+        seed = self.typed_seed()
+        self.new_text.set("Generate game" if seed is not None and seed != self.game_seed else "New game")
+
+    def on_new_button(self):
+        if self.new_text.get() == "Generate game":
+            self.new_game()
+        else:
+            self.new_random_game()
+
+    def new_random_game(self):
+        """A game from a fresh random seed (drawn from the OS, so it does not depend on the last one)."""
+        seed = secrets.randbelow(2 ** 31 - 1) + 1
+        while seed == self.game_seed:
+            seed = secrets.randbelow(2 ** 31 - 1) + 1
+        self.seed_var.set(str(seed))
+        self.new_game()
+
     def new_game(self):
+        """A game from the seed in the entry box (a random one if the box is empty or not a number)."""
         self.stop_auto()
         mode = self.current_mode()
         w, h, mines = self.eng.preset(mode, self.level_var.get())
-        try:
-            seed = int(self.seed_var.get())
-        except ValueError:
-            seed = random.randrange(1, 2 ** 31)
+        seed = self.typed_seed()
+        if seed is None:
+            seed = secrets.randbelow(2 ** 31 - 1) + 1
         self.seed_var.set(str(seed))
+        self.game_seed = seed
+        self.update_new_button()
         # The orientation follows from the seed, so replaying a seed looks the same.
         orientation = random.Random(seed).randrange(8) if self.orient_var.get() else 0
         self.eng.set_solver_orientation(orientation)
