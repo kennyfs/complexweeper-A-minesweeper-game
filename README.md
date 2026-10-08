@@ -1,72 +1,198 @@
-复扫雷 Complexweeper
+# Complexweeper
 
-扫雷，但雷是复数；格子上的数字是它周围所有雷之和的模长。
+Minesweeper where the mines are complex numbers. The number on a cell is the modulus of the
+sum of all the mines around it.
 
-翻开所有非雷格子就胜利。
+There are two modes: the **circular complex** mode (`i² = −1`) and the **Minkowski** mode
+(`j² = +1`). The repository contains the game logic in C++20, a solver that plays one step at a
+time with undo, and a small tkinter GUI that lets you watch the solver think.
 
-无论胜利还是失败，游戏都会在结局告诉玩家标错和标对了哪些雷。
+Developed and tested on Linux.
 
-本仓库目前只包含游戏逻辑（C++20，见 `cpp/`），不含 GUI，没有第三方库。
+## The game
 
-构建并运行规则自检：
+### Mines, numbers and flags
 
-    cmake -S cpp -B cpp/build && cmake --build cpp/build && ./cpp/build/game_test
+Every mine is one of four types, a unit vector on the real axis or on the imaginary axis:
 
+| type | circular complex mode | Minkowski mode |
+| --- | --- | --- |
+| 1 | +1 | +1 |
+| 2 | −1 | −1 |
+| 3 | +i | +j |
+| 4 | −i | −j |
 
+An open cell shows the modulus of the sum of the mines in its eight neighbors. Right click cycles
+a flag on a closed cell: none → +1 → −1 → +i (+j) → −i (−j) → none.
 
-介绍：
+**Circular complex mode.** With `a` the real part and `b` the imaginary part of the sum, the cell
+shows `√(a² + b²)`, written as an integer or a simplified radical. Because a cell has at most 8
+neighbors only 24 numbers can occur:
 
-游戏模式有2种（未来可能还会增加）：圆复数模式，闵可夫斯基模式。
+> 0, 1, 2, 3, 4, 5, 6, 7, 8
+> √2, √5, √10, √13, √17, √26, √29, √34, √37
+> 2√2, 2√5, 3√2, 4√2, 5√2, 2√10
 
+For example three mines +1, +1 and +i around a cell sum to 2 + i and show √5. A +1 and a −1 (or a
++i and a −i) cancel each other; such a pair is called a *cancelling pair*. A **blank** cell has no
+mine around it at all, while a **0** means the mines around it cancel out completely. They look
+different and are not the same thing.
 
+**Minkowski mode.** The hyperbolic unit `j` has `j² = +1`, and the formal modulus (the
+"spacetime interval") is `√(a² − b²)`, so it can be imaginary: a single +j mine shows `i`. The
+mode is only inspired by the Minkowski metric and has nothing to do with general relativity. The 39
+numbers that can occur are:
 
-圆复数模式：
+> 0, 1, √3, 2, √5, √7, 2√2, 3, 2√3, √15, 4, √21, 2√6, 5, 4√2, √35, 6, 4√3, 7, 8
+> i, √3 i, 2i, √5 i, √7 i, 2√2 i, 3i, 2√3 i, √15 i, 4i, √21 i, 2√6 i, 5i, 4√2 i, √35 i, 6i,
+> 4√3 i, 7i, 8i
 
-棋盘上有四种雷，分别是正实雷、负实雷、正虚雷和负虚雷，也就是+1、-1、+i和-i。
+### Winning and losing
 
-一个格子显示的数是周围所有雷之和的模长。
+You **lose** by opening a mine. You **win** when both of these hold:
 
-因为周围最多 8 格，所以只可能出现 24 种数字：
+1. the flags sit exactly on the mines (no flag on a safe cell, no mine without a flag), and
+2. the flags around every open number add up, in the rules of the current mode, to that number.
 
-0, 1, 2, 3, 4, 5, 6, 7, 8, 
+Opening every safe cell is not enough: the mines have to be flagged as well.
 
-√2, √5, √10, √13, √17, √26, √29, √34, √37, 
+Flag types do not have to match how the board was generated; any labeling that reproduces all the
+numbers wins. That is deliberate, because the numbers can never tell the absolute type of a mine:
+every connected group of mines can be negated, have its real and imaginary parts negated
+separately and (in the circular complex mode) have the two parts swapped without changing a
+single number. That makes 8 equivalent labelings per group in the circular complex mode and 4 in
+the Minkowski mode, where swapping is not a symmetry because `a² − b²` changes sign.
 
-2√2, 2√5, 3√2, 4√2, 5√2, 2√10。
+When the game is over, the mines are shown with their types, correct flags get a check mark and
+flags on cells without a mine get a red cross.
 
-正负雷数量相等时会互相抵消，这种1正1负的正负对我们称为“抵消对”；
+### Chording
 
-0和空白不是一回事。空白格子表示周围完全没有雷；0表示周围完全为抵消对。
+Middle click (or Shift + left click) on an open number opens all its unflagged neighbors if the
+flags match the real mines around it, and does nothing otherwise:
 
-规则：当数字格子周围插上的旗帜数量等于真实雷数，且实虚比例符合真实比例或其倒数，则允许展开；可以利用这一点试探周围是否有抵消对。
-谨记扫雷的胜利判定是翻开所有的格子，而不是插对全部的旗帜。
+* **Circular complex mode:** the number of flags equals the number of mines, and the split into
+  real-axis and imaginary-axis flags equals the true split or its swap.
+* **Minkowski mode:** the number of flags equals the number of mines, and the real part and the
+  `j` part of the flags' sum each equal the true ones up to sign.
 
+The check compares against the real mines, so a failed chord is information; it can be used to
+probe for cancelling pairs. If the criterion passes but a mine is not covered by a flag, you step
+on it.
 
+## What is in this repository
 
+| path | contents |
+| --- | --- |
+| `cpp/src/game.*` | the rules and the game state (no GUI, no third-party libraries) |
+| `cpp/src/solver.*` | the solver |
+| `cpp/src/session.*` | game + solver + undo history |
+| `cpp/src/capi.*` | a C interface, built as a shared library for the GUI |
+| `cpp/tests/` | the rule tests and the solver tests |
+| `cpp/tools/winrate.cpp` | multithreaded win-rate measurement of the solver |
+| `gui/` | the tkinter GUI (Python, talks to the C++ library through `ctypes`) |
+| `tools/tune_mines.py` | tunes the number of mines for a target win rate |
+| `素材/` | the sprite atlas used by the GUI (see the asset notice below) |
 
-双曲复数模式（闵可夫斯基模式）：
+## Getting started
 
-定义双曲虚数单位（类时单位）j²=1，形式模长（时空间隔）为 $S=\sqrt{a^2-b^2}$。本模式只是从闵可夫斯基时空度规得来的灵感，跟广义相对论没有多大关系。
+You need CMake 3.20 or newer and a C++20 compiler (GCC 15 was used). The GUI also needs Python 3
+with tkinter and [Pillow](https://pypi.org/project/pillow/).
 
-棋盘上有四种雷，分别是正实雷（正类空雷）、负实雷（负类空雷）、正双曲虚雷（正类时雷）和负双曲虚雷（负类时雷），也就是+1、-1、+j和-j。
+### Run the GUI
 
-这种情况下会出现：
+```bash
+python3 gui/app.py
+```
 
-0, 1, √3, 2, √5, √7, 2√2, 3, 2√3, √15, 4, √21, 2√6, 5, 4√2, √35, 6, 4√3, 7, 8,
+The first run builds the C++ library with CMake. In the window:
 
-i, √3i, 2i, √5i, √7i, 2√2i, 3i, 2√3i, √15i, 4i, √21i, 2√6i, 5i, 4√2i, √35i, 6i, 4√3i, 7i, 8i。
+* Left click opens, right click cycles the flag, middle click or Shift + left click chords.
+* **Step ▶** lets the solver make one move, **◀ Undo** takes back the last move (the solver's or
+  your own), **Auto play** keeps stepping with an adjustable delay.
+* Each solver step highlights the cell it acted on and explains why: certainly safe, certainly a
+  mine, or a guess with its estimated risk.
+* **Random flag orientation** makes the solver pick one of the equivalent flag labelings per
+  game, so that solutions do not all look the same. It follows from the seed, so replaying a seed
+  looks the same.
+* Keys: Right = step, Left = undo, Space = auto play, F2 = new game.
+* The window never changes size; the zoom is limited to what fits.
 
-由于出现了虚数，可以直接判断雷的实、j，所以展开判定更加严格，要求实部（类空部）、j部（类时部）的旗帜数量完全正确，不过正负仍然不做要求。
+### Run the tests
 
-其他规则不变。
+```bash
+cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+cmake --build cpp/build
+ctest --test-dir cpp/build
+python3 gui/selftest.py
+python3 gui/app.py --smoke
+```
 
+`ctest` runs the rule tests and the solver tests. `gui/selftest.py` needs no window. `--smoke`
+drives the real window with mouse events and briefly opens it, so it needs a display.
 
+## The solver
 
-素材来源：
-扫雷原始图像素材：Microsoft（原版扫雷作者 Robert Donner、Curt Johnson）。
-新增图像素材（新增的显示值、四种旗帜、伪数码管的i、j单位、人脸按钮等）：青月晓。
-程序图标：青月晓。
+The solver plays like a careful human: it only uses what is visible (which cells are open, their
+numbers, whether a cell is blank, and the total number of mines) and never reads the hidden board.
+It is built to be watched, so it makes exactly one move at a time: it either opens one cell (with
+its cascade) or places one flag.
 
-本程序与 Microsoft 公司无隶属关系。
-代码按GPL-3.0授权（见 `LICENSE`）。上表中"扫雷原始图像素材"的权利属于 Microsoft，
-不在 GPL-3.0 的授权范围内。
+Each closed cell is a variable (no mine, or one of four mine types) and each open number is a
+constraint on its neighbors. To decide the next move it tries, from cheap to expensive:
+
+1. **Constraint propagation:** enumerate each constraint on its own and drop the values nothing
+   supports.
+2. **The total mine count:** if no mine is left, every closed cell is safe; if as many mines are
+   left as closed cells, all of them are mines.
+3. **Exhaustive enumeration** of each connected group of constraints, with a node budget and
+   symmetry breaking. A group that is too big is searched in small windows around each constraint
+   instead; what holds for some of the constraints also holds for all of them.
+4. **A guess**, if nothing is certain: the closed cell with the lowest estimated probability of
+   being a mine.
+
+The flags it places are real, typed flags. A new flag gets the first type that still lets every
+open number be satisfied, and when a newly opened number shows that two groups of flags were
+oriented inconsistently, the affected flags are re-oriented in the same step. Because the rules
+accept any consistent labeling, a game that the solver survives ends in a win.
+
+### Difficulty presets
+
+The mine counts were tuned with `tools/tune_mines.py` so that the solver wins about 90% of its
+games on Beginner, 80% on Intermediate and 70% on Expert. A human wins less often than the
+solver, because the solver guesses at the lowest possible risk and always finds a consistent flag
+labeling. Win rates measured with 2000 to 4000 games per entry:
+
+| mode | Beginner (9×9) | Intermediate (16×16) | Expert (30×16) |
+| --- | --- | --- | --- |
+| circular complex | 7 mines, 92.0% | 24 mines, 81.8% | 47 mines, 69.0% |
+| Minkowski | 8 mines, 87.5% | 25 mines, 79.0% | 47 mines, 70.1% |
+
+On the 81-cell Beginner board one mine more or less moves the win rate by about 5 points, so no
+count hits 90% exactly; these are the closest ones. The presets live in `cpp/src/game.hpp`.
+
+To tune them again (for example after changing the solver), run:
+
+```bash
+python3 tools/tune_mines.py --total-threads 12 --json tuned.json --log tuning_log.jsonl
+```
+
+All configurations share one hard budget of worker threads. Every evaluation is appended to the
+log, so a partial run is not lost. Use `--targets` to choose other target win rates.
+
+## Assets, credits and license
+
+The code is licensed under GPL-3.0 (see `LICENSE`).
+
+The graphics come in two kinds with different rights; read the asset notice (`素材说明.md`, in
+Chinese) before redistributing or using them commercially.
+
+* The original Minesweeper graphics (buttons, flags, mines and their variants) belong to
+  Microsoft; the original game was written by Robert Donner and Curt Johnson. They are **not**
+  covered by the GPL-3.0 license of this repository.
+* The new graphics (the number sprites, the four flags, the LED digits with the `i` and `j`
+  units, the faces) and the program icon were drawn by Qingyuexiao (青月晓) and are released under
+  GPL-3.0 together with the code.
+
+This program is an independent reimplementation. It is not affiliated with, authorized by or
+endorsed by Microsoft. "Minesweeper" and related trademarks belong to their respective owners.
