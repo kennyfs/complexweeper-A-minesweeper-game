@@ -17,6 +17,11 @@
 //      holds for a subset of the constraints also holds for all of them.
 //   4. If nothing is certain, guess the closed cell with the lowest estimated mine probability.
 //
+// Order of the moves. When several moves are certain, flags come first; after every opening the
+// solver looks again for certain flags before it opens the next cell. Among moves of the same kind
+// it takes the one closest to its previous move (to the center of the board at the start and after a
+// clear step).
+//
 // Flags of the player. Flags the player placed are taken over as if the solver had placed them
 // (they are not placed again, and they count against the number of mines left); a wrong type is
 // re-oriented like any other. If they contradict the numbers, the solver removes all flags in one
@@ -98,7 +103,14 @@ private:
     std::size_t repair(Game& g, std::uint64_t budget);
 
     std::array<std::uint8_t, MAX_CELLS> marks_{};
-    std::vector<Move> queue_;  // stored in reverse order; the next step is at the back
+    std::vector<Move> queue_;  // the certain moves found by the last analysis, in no particular order
+    // Where the solver acted last (row, column; the board center after a clear step). The next move
+    // is the one closest to it.
+    double last_r_ = 0.0;
+    double last_c_ = 0.0;
+    // Removes and returns the next move from the queue: flags before openings, then the closest
+    // one to the last move (ties: the lowest cell).
+    Move takeNext(const Game& g);
     int orientation_ = 0;
 };
 

@@ -247,11 +247,11 @@ void testManualInterplay() {
         Session a;
         a.newGame(9, 9, 7, Mode::complex, seed);
         a.solverStep(0);
-        for (int k = 0; k < 6; ++k) a.solverStep(0);
+        for (int k = 0; k < 6 && !a.game.over; ++k) a.solverStep(0);
         int by_hand = 0;
         for (std::size_t i = 0; i < a.game.n && by_hand < 3; ++i) {
             if (a.game.mine[i] != 0 && a.game.open[i] == 0 && a.game.flag[i] == 0) {
-                while (a.game.flag[i] != a.game.mine[i]) a.cycleFlag(i);  // the right type, placed by hand
+                for (int c = 0; c < 4 && !a.game.over && a.game.flag[i] != a.game.mine[i]; ++c) a.cycleFlag(i);  // the right type, by hand
                 ++by_hand;
             }
         }

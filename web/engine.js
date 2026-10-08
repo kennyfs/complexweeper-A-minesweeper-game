@@ -613,14 +613,19 @@
   class Solver {
     constructor() {
       this.marks = new Uint8Array(MAX_CELLS);
-      this.queue = [];  // stored in reverse order; the next step is at the back
+      this.queue = [];  // the certain moves found by the last analysis, in no particular order
       this.orientation = 0;
+      // Where the solver acted last (row, column; the board center after a clear step).
+      this.lastR = 0;
+      this.lastC = 0;
     }
     clone() {
       const s = new Solver();
       s.marks = this.marks.slice();
       s.queue = this.queue.map((m) => Object.assign({}, m));
       s.orientation = this.orientation;
+      s.lastR = this.lastR;
+      s.lastC = this.lastC;
       return s;
     }
     setOrientation(o) { this.orientation = o & 7; }
@@ -736,8 +741,11 @@
         }
       }
 
-      // Level 3: exhaustive enumeration, which also yields mine probabilities for guessing.
-      if (!decided) {
+      // Level 3: exhaustive enumeration, which also yields mine probabilities for guessing. Certain
+      // flags go first, so enumerate even if safe cells are already known (but not to guess).
+      let haveMine = extraMines.length > 0;
+      for (let v = 0; v < nv; v++) haveMine = haveMine || F.mine[v] !== 0;
+      if (!decided || !haveMine) {
         const { groups, groupOf } = components(P);
         const tooBig = [];
         groups.forEach((comp, ci) => {
@@ -754,7 +762,7 @@
           }
         });
         // Components too big: enumerate small windows around each constraint instead.
-        if (!F.any && tooBig.length) {
+        if (!decided && !F.any && tooBig.length) {
           const consOfComp = groups.map(() => []);
           P.cons.forEach((c, ci) => consOfComp[groupOf[c.vars[0]]].push(ci));
           for (let radius = 1; radius <= MAX_WINDOW_RADIUS && !F.any; radius++) {
@@ -781,7 +789,7 @@
           else if (F.mine[v] && !F.safe[v] && marks[P.cell[v]] === 0) mines.push(makeMove(KIND_FLAG, P.cell[v]));
         }
         if (opens.length || mines.length) {
-          this.queue = mines.slice().reverse().concat(opens.slice().reverse());
+          this.queue = mines.concat(opens);
           return true;
         }
       }
@@ -822,6 +830,25 @@
       return true;
     }
 
+    // Removes and returns the next move: flags before openings, then the closest one to the last
+    // move (ties: the lowest cell).
+    takeNext(g) {
+      let best = 0, bestDist = 0;
+      for (let k = 0; k < this.queue.length; k++) {
+        const m = this.queue[k];
+        const dr = Math.floor(m.cell / g.w) - this.lastR, dc = (m.cell % g.w) - this.lastC;
+        const dist = dr * dr + dc * dc;
+        const b = this.queue[best];
+        let better = true;
+        if (k > 0) {
+          if ((m.kind === KIND_FLAG) !== (b.kind === KIND_FLAG)) better = m.kind === KIND_FLAG;
+          else better = dist < bestDist || (dist === bestDist && m.cell < b.cell);
+        }
+        if (better) { best = k; bestDist = dist; }
+      }
+      return this.queue.splice(best, 1)[0];
+    }
+
     // Advance one step and apply it to `g`. kind === KIND_NONE: nothing left to do.
     step(g) {
       if (g.over) return makeMove(KIND_NONE, 0);
@@ -830,18 +857,22 @@
         this.marks.fill(0);
         const m = makeMove(KIND_OPEN, Math.floor(g.h / 2) * g.w + Math.floor(g.w / 2), REASON_FIRST_CLICK);
         g.startAt(m.cell);
+        this.lastR = Math.floor(m.cell / g.w);
+        this.lastC = m.cell % g.w;
         return m;
       }
       this.syncMarks(g);
       const cleared = () => {
         const m = makeMove(KIND_CLEAR, 0);
         m.retyped = this.clearFlags(g);
+        this.lastR = (g.h - 1) / 2;
+        this.lastC = (g.w - 1) / 2;
         return m;
       };
       if (!this.adoptFlags(g)) return cleared();
       for (let attempt = 0; attempt < 2; attempt++) {
         while (this.queue.length) {
-          const m = this.queue.pop();
+          const m = this.takeNext(g);
           if (g.open[m.cell] !== 0 || this.marks[m.cell] !== 0) continue;  // already handled
           if (m.kind === KIND_OPEN) {
             if (g.flag[m.cell] !== 0) g.setFlag(m.cell, 0);  // a player's flag must not block the solver
@@ -850,6 +881,7 @@
               m.retyped = this.repair(g, REPAIR_BUDGET);
               if (m.retyped !== 0) g.checkWin();
             }
+            this.queue = [];  // the new number may reveal certain flags: look again before the next opening
           } else {
             m.type = this.chooseType(g, m.cell);
             g.setFlag(m.cell, m.type);
@@ -858,6 +890,8 @@
             m.type = g.flag[m.cell];  // re-orienting may have changed this flag too
             g.checkWin();
           }
+          this.lastR = Math.floor(m.cell / g.w);
+          this.lastC = m.cell % g.w;
           return m;
         }
         if (!this.analyze(g)) {

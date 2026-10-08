@@ -534,7 +534,10 @@ bool Solver::analyze(const Game& g) {
     }
 
     // Level 3: exhaustive enumeration, which also yields mine probabilities for guessing.
-    if (!decided) {
+    // Certain flags go first, so enumerate even if safe cells are already known (but not to guess).
+    bool have_mine = !extra_mines.empty();
+    for (int v = 0; v < nv; ++v) have_mine = have_mine || F.mine[v] != 0;
+    if (!decided || !have_mine) {
         std::vector<int> group_of;
         const auto comps = components(P, group_of);
         std::vector<int> too_big;
@@ -554,7 +557,7 @@ bool Solver::analyze(const Game& g) {
         // Components too big for the budget: enumerate small windows around each constraint
         // instead, widening the window until something is found. A window is a relaxation, so
         // what it proves is certain, but its probabilities are not trustworthy and are not used.
-        if (!F.any && !too_big.empty()) {
+        if (!decided && !F.any && !too_big.empty()) {
             std::vector<std::vector<int>> cons_of_comp(comps.size());
             for (std::size_t ci = 0; ci < P.cons.size(); ++ci) {
                 cons_of_comp[group_of[P.cons[ci].vars[0]]].push_back(static_cast<int>(ci));
@@ -578,8 +581,6 @@ bool Solver::analyze(const Game& g) {
     }
 
     if (F.any || decided) {
-        // Open the safe cells first (that makes progress), then flag mines. queue_ is consumed
-        // from the back, so insert in reverse.
         std::vector<Move> opens = extra_opens, mines = extra_mines;
         for (int v = 0; v < nv; ++v) {
             if (F.safe[v] && !F.mine[v]) {
@@ -595,9 +596,8 @@ bool Solver::analyze(const Game& g) {
             }
         }
         if (!opens.empty() || !mines.empty()) {
-            queue_.clear();
-            queue_.insert(queue_.end(), mines.rbegin(), mines.rend());
-            queue_.insert(queue_.end(), opens.rbegin(), opens.rend());
+            queue_ = mines;
+            queue_.insert(queue_.end(), opens.begin(), opens.end());
             return true;
         }
     }
@@ -656,6 +656,33 @@ bool Solver::analyze(const Game& g) {
     return true;
 }
 
+Move Solver::takeNext(const Game& g) {
+    std::size_t best = 0;
+    double best_dist = 0.0;
+    for (std::size_t k = 0; k < queue_.size(); ++k) {
+        const Move& m = queue_[k];
+        const double dr = static_cast<double>(m.cell / g.w) - last_r_;
+        const double dc = static_cast<double>(m.cell % g.w) - last_c_;
+        const double dist = dr * dr + dc * dc;
+        const Move& b = queue_[best];
+        bool better = true;
+        if (k > 0) {
+            if ((m.kind == MoveKind::mark) != (b.kind == MoveKind::mark)) {
+                better = m.kind == MoveKind::mark;
+            } else {
+                better = dist < best_dist || (dist == best_dist && m.cell < b.cell);
+            }
+        }
+        if (better) {
+            best = k;
+            best_dist = dist;
+        }
+    }
+    Move m = queue_[best];
+    queue_.erase(queue_.begin() + static_cast<std::ptrdiff_t>(best));
+    return m;
+}
+
 Move Solver::step(Game& g, std::uint32_t now_ms) {
     if (g.over) return {};
     if (!g.started) {
@@ -666,6 +693,8 @@ Move Solver::step(Game& g, std::uint32_t now_ms) {
         m.reason = Reason::first_click;
         m.cell = static_cast<std::uint16_t>((static_cast<std::size_t>(g.h) / 2) * g.w + g.w / 2);
         g.startAt(m.cell, now_ms);
+        last_r_ = static_cast<double>(m.cell / g.w);
+        last_c_ = static_cast<double>(m.cell % g.w);
         return m;
     }
     syncMarks(g);
@@ -673,13 +702,14 @@ Move Solver::step(Game& g, std::uint32_t now_ms) {
         Move m;
         m.kind = MoveKind::clear;
         m.retyped = static_cast<std::uint16_t>(clearFlags(g));
+        last_r_ = (g.h - 1) / 2.0;
+        last_c_ = (g.w - 1) / 2.0;
         return m;
     };
     if (!adoptFlags(g)) return cleared();
     for (int attempt = 0; attempt < 2; ++attempt) {
         while (!queue_.empty()) {
-            Move m = queue_.back();
-            queue_.pop_back();
+            Move m = takeNext(g);
             if (g.open[m.cell] != 0 || marks_[m.cell] != 0) continue;  // already handled
             if (m.kind == MoveKind::open) {
                 if (g.flag[m.cell] != 0) g.setFlag(m.cell, 0);  // a flag the player placed must not block the solver
@@ -689,6 +719,7 @@ Move Solver::step(Game& g, std::uint32_t now_ms) {
                     m.retyped = static_cast<std::uint16_t>(repair(g, kRepairBudget));
                     if (m.retyped != 0) g.checkWin();
                 }
+                queue_.clear();  // the new number may reveal certain flags: look again before the next opening
             } else {
                 m.type = chooseType(g, m.cell);
                 g.setFlag(m.cell, m.type);
@@ -697,6 +728,8 @@ Move Solver::step(Game& g, std::uint32_t now_ms) {
                 m.type = g.flag[m.cell];  // re-orienting may have changed this flag too
                 g.checkWin();
             }
+            last_r_ = static_cast<double>(m.cell / g.w);
+            last_c_ = static_cast<double>(m.cell % g.w);
             return m;
         }
         if (!analyze(g)) {
