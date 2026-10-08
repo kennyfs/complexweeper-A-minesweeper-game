@@ -1,4 +1,4 @@
-// 复扫雷 · 規則與狀態的實作
+// Complexweeper rules and state implementation
 #include "game.hpp"
 
 #include <algorithm>
@@ -35,7 +35,7 @@ std::array<std::uint16_t, 5> splitEvenly(std::uint16_t total) {
     return out;
 }
 
-// ------------------------------------------------------------------ 鄰域與基本查詢
+// ------------------------------------------------------------------ Neighborhood and basic queries
 
 Game::Game() {
     clue.fill(-1);
@@ -99,7 +99,7 @@ std::array<int, 2> Game::sumsOf(std::size_t cell, bool use_flag) const {
     return {a, b};
 }
 
-// ------------------------------------------------------------------ 開局與布雷
+// ------------------------------------------------------------------ Starting a game and laying mines
 
 void Game::setMsg(Msg m, std::uint16_t arg) {
     msg = m;
@@ -136,7 +136,7 @@ void Game::newGame(std::uint32_t new_seed) {
 
 void Game::startAt(std::size_t cell, std::uint32_t now_ms) {
     if (!validCell(cell)) return;
-    setSeed(seed);  // 同一局重新開始時，同一個開局格會得到同一個棋盤
+    setSeed(seed);  // restarting the same game with the same first click gives the same board
     genBoard(cell);
     start_cell = static_cast<std::int32_t>(cell);
     started = true;
@@ -146,7 +146,7 @@ void Game::startAt(std::size_t cell, std::uint32_t now_ms) {
     t0 = now_ms;
     moves = 1;
     setMsg(Msg::none);
-    checkWin();  // 開局連片可能剛好翻完所有非雷格（例如極小盤面）
+    checkWin();  // the opening cascade may open every safe cell (e.g. on a tiny board)
 }
 
 void Game::genBoard(std::size_t start) {
@@ -155,7 +155,7 @@ void Game::genBoard(std::size_t start) {
     std::fill_n(clue.begin(), n, -1);
     std::fill_n(open.begin(), n, 0);
 
-    // 候選位置：除了開局格與它的鄰域之外的所有格子（保證開局格是空白格）
+    // Candidate positions: every cell except the start cell and its neighbors (so the start cell is blank)
     const int W = w;
     const int H = h;
     const int sr = static_cast<int>(start) / W;
@@ -168,7 +168,7 @@ void Game::genBoard(std::size_t start) {
             pool[m++] = static_cast<std::uint16_t>(r * W + c);
         }
     }
-    // 洗位置
+    // Shuffle the positions
     for (std::size_t i = m; i > 1; --i) {
         std::swap(pool[i - 1], pool[rng.below(i)]);
     }
@@ -178,7 +178,7 @@ void Game::genBoard(std::size_t start) {
     const std::size_t count = std::min<std::size_t>(want > 0 ? want : mines, m);
 
     if (want > 0) {
-        // 精確配比：先依序鋪出類型序列（最多 count 個），再洗一遍
+        // Exact ratio: lay out the type sequence in order (at most `count` entries), then shuffle it
         std::array<std::uint8_t, MAX_CELLS> list;
         std::size_t ln = 0;
         for (std::size_t t = 1; t <= 4 && ln < count; ++t) {
@@ -220,11 +220,12 @@ void Game::countTypes() {
     }
 }
 
-// ------------------------------------------------------------------ 翻開與連片
+// ------------------------------------------------------------------ Opening cells and cascades
 
 std::size_t Game::cascadeOpen(std::span<const std::uint16_t> seeds) {
-    // 格子在「被發現」的當下就標成已翻開，所以每格最多進棧一次，也不需要另外的查重表。
-    // 只有空白格會進棧去擴散它的鄰域；插了旗的格子、雷與已翻開的格子都被繞開。
+    // A cell is marked open the moment it is discovered, so each cell enters the stack at most once and no
+    // separate visited table is needed. Only blank cells are pushed to spread to their neighbors; flagged
+    // cells, mines and already open cells are skipped.
     std::array<std::uint16_t, MAX_CELLS> stack;
     std::size_t sp = 0;
     std::size_t opened = 0;
@@ -255,7 +256,7 @@ void Game::reveal(std::size_t cell) {
     checkWin();
 }
 
-// ------------------------------------------------------------------ 旗幟
+// ------------------------------------------------------------------ Flags
 
 bool Game::setFlag(std::size_t cell, std::uint8_t t) {
     if (!validCell(cell) || t > 4) return false;
@@ -274,7 +275,7 @@ bool Game::cycleFlag(std::size_t cell) {
     return true;
 }
 
-// ------------------------------------------------------------------ 展開判據
+// ------------------------------------------------------------------ Chord criterion
 
 bool Game::matchComboTruth(std::size_t cell) const {
     if (!validCell(cell) || nbrMineCount(cell) != nbrFlagCount(cell)) return false;
@@ -286,8 +287,9 @@ bool Game::matchComboTruth(std::size_t cell) const {
         }
         return std::abs(f[0]) == std::abs(t[0]) && std::abs(f[1]) == std::abs(t[1]);
     }
-    // 圓複數模式：P / V = 真雷中「實類 / 虛類」的顆數，gp / gv = 旗幟中的同樣統計。
-    // 顯示值看不出整體取負、也看不出實虛互換，所以實虛配比等於真值或其倒數都算數。
+    // Complex mode: P / V = number of real-type / imaginary-type mines, gp / gv = the same count for flags.
+    // The displayed value cannot reveal a global negation or a real/imaginary swap, so a flag split equal to
+    // the true split or to its swap is accepted.
     int P = 0;
     int V = 0;
     int gp = 0;
@@ -311,7 +313,7 @@ void Game::tryExpand(std::size_t cell) {
         setMsg(Msg::judge_fail);
         return;
     }
-    // 判據通過但仍有真雷沒被旗幟蓋住：踩雷
+    // The criterion passed but a real mine is not covered by a flag: stepping on it loses
     for (std::uint16_t j : std::span(uns.data(), un)) {
         if (mine[j] != 0) {
             open[j] = 1;
@@ -325,7 +327,7 @@ void Game::tryExpand(std::size_t cell) {
     checkWin();
 }
 
-// ------------------------------------------------------------------ 勝負與統計
+// ------------------------------------------------------------------ Win / lose and statistics
 
 void Game::checkWin() {
     for (std::size_t i = 0; i < n; ++i) {

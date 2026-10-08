@@ -1,4 +1,4 @@
-// 規則自檢：跑規則層不變量（無界面）
+// Rules self-test: runs the rule-level invariants (no UI).
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -18,15 +18,16 @@ void expect(bool cond, const char* name) {
     ++g_checks;
     if (!cond) {
         ++g_failed;
-        std::printf("  [失敗] %s\n", name);
+        std::printf("  [FAIL] %s\n", name);
     }
 }
 
 using Flags = std::array<bool, MAX_CELLS>;
 using Counts = std::array<std::uint16_t, 5>;
-constexpr Counts kRandom{};  // 全 0 = 類型隨機撒
+constexpr Counts kRandom{};  // all zero = random mine types
 
-// 獨立的洪水填充，用來核對連片：連片覆蓋 = 連通空白格 ∪ 它們的非雷鄰居
+// An independent flood fill used to check the cascade:
+// cascade coverage = connected blank cells + their non-mine neighbors.
 Flags expectedCascade(const Game& g, std::size_t start) {
     Flags set{};
     Flags comp{};
@@ -69,8 +70,10 @@ Flags openSnapshot(const Game& g) {
     return f;
 }
 
-// 閔可夫斯基自檢用：9×9 棋盤的格子 12 周圍正好 8 個鄰居，按「四種雷的顆數」配比擺上去。
-// as_flag = true 時擺的是旗幟（不重算顯示值），否則擺真雷並重算。
+// Minkowski tests: cell 12 of a 9x9 board has exactly 8 neighbors; place mines (or flags) on
+// them according to the number of mines of each of the four types.
+// With as_flag = true flags are placed (clues are not recomputed), otherwise real mines are
+// placed and the clues are recomputed.
 void hyperPlace(Game& g, const std::array<int, 4>& counts, bool as_flag) {
     for (std::size_t i = 0; i < 25; ++i) {
         if (!as_flag) g.mine[i] = 0;
@@ -92,7 +95,7 @@ void hyperPlace(Game& g, const std::array<int, 4>& counts, bool as_flag) {
     if (!as_flag) g.computeClues();
 }
 
-// ---- 1. 隨機數確定性 ----
+// ---- 1. Determinism of the random numbers ----
 void testDeterminism() {
     Game a, b, c;
     buildBoard(a, 16, 16, 40, kRandom, 12345, 100);
@@ -104,8 +107,8 @@ void testDeterminism() {
         same = same && a.mine[i] == b.mine[i];
         diff = diff || a.mine[i] != c.mine[i];
     }
-    expect(same, "同種子 + 同開局格應生成完全相同的棋盤");
-    expect(diff, "不同種子應生成不同棋盤");
+    expect(same, "same seed + same first click give the identical board");
+    expect(diff, "different seeds give different boards");
 
     Rng r1(42), r2(42);
     bool in_range = true;
@@ -113,24 +116,24 @@ void testDeterminism() {
         const double x = r1.next();
         in_range = in_range && x == r2.next() && x >= 0.0 && x < 1.0;
     }
-    expect(in_range, "Rng 同種子同序列，且落在 [0, 1)");
+    expect(in_range, "Rng: same seed gives the same sequence, within [0, 1)");
     Rng r3(7);
     bool below_ok = true;
     for (int i = 0; i < 1000; ++i) below_ok = below_ok && r3.below(10) < 10;
-    expect(below_ok && r3.below(0) == 0, "below(n) < n，below(0) = 0");
+    expect(below_ok && r3.below(0) == 0, "below(n) < n, and below(0) == 0");
     Rng z0(0), z1(1);
-    expect(z0.next() == z1.next(), "種子 0 與種子 1 等價");
+    expect(z0.next() == z1.next(), "seed 0 is equivalent to seed 1");
 
     bool split_ok = splitEvenly(10) == Counts{0, 3, 3, 2, 2};
     for (std::uint16_t total = 0; total <= MAX_MINES; ++total) {
         const Counts s = splitEvenly(total);
         split_ok = split_ok && s[1] + s[2] + s[3] + s[4] == total && s[1] - s[4] <= 1;
     }
-    expect(split_ok, "splitEvenly 總和守恆且各類相差不超過 1");
-    std::printf("1 隨機數確定性：完成\n");
+    expect(split_ok, "splitEvenly conserves the total and the types differ by at most 1");
+    std::printf("1 determinism: done\n");
 }
 
-// ---- 2. 精確配比 ----
+// ---- 2. Exact mine-type ratio ----
 void testExactRatio() {
     const Counts cases[] = {{0, 3, 2, 4, 1}, {0, 0, 0, 0, 6}, {0, 7, 0, 0, 0}, {0, 5, 5, 0, 0}, {0, 0, 0, 4, 4}};
     int bad = 0;
@@ -145,11 +148,11 @@ void testExactRatio() {
             bad += game.mines != sum;
         }
     }
-    expect(bad == 0, "指定配比必須被精確執行（5 種配比 × 3 種子）");
-    std::printf("2 精確配比：%s\n", bad == 0 ? "通過" : "有偏差");
+    expect(bad == 0, "a requested ratio is honored exactly (5 ratios x 3 seeds)");
+    std::printf("2 exact ratio: %s\n", bad == 0 ? "ok" : "deviates");
 }
 
-// ---- 3. 純實 / 純虛局面的顯示值全是完全平方數 ----
+// ---- 3. Pure real / pure imaginary boards only show perfect squares ----
 void testPureSquares() {
     int bad = 0;
     Game game;
@@ -167,11 +170,11 @@ void testPureSquares() {
             }
         }
     }
-    expect(bad == 0, "純實/純虛局面裡所有顯示值都必須是完全平方數");
-    std::printf("3 純實/純虛不變量：%s\n", bad == 0 ? "通過" : "失敗");
+    expect(bad == 0, "all displayed values of pure real / pure imaginary boards are perfect squares");
+    std::printf("3 pure real / imaginary invariant: %s\n", bad == 0 ? "ok" : "failed");
 }
 
-// ---- 4. 連片：與獨立洪水填充逐格一致，且絕不翻雷 ----
+// ---- 4. Cascade: matches an independent flood fill and never opens a mine ----
 void testCascade() {
     Game game;
     int mismatch = 0, mine_opened = 0, samples = 0, zero_cascaded = 0, zero_samples = 0;
@@ -192,7 +195,7 @@ void testCascade() {
                 mine_opened += got && game.mine[k] != 0;
             }
         }
-        // 顯示 0 但周圍有雷（抵消對）的格子絕不連片
+        // A cell showing 0 with mines around it (cancelling pairs) never cascades.
         buildBoard(game, 12, 12, 24, kRandom, seed, 70);
         for (std::size_t k = 0; k < game.n; ++k) {
             if (game.mine[k] != 0 || game.open[k] != 0) continue;
@@ -203,16 +206,16 @@ void testCascade() {
             zero_cascaded += game.openedCount() - before != 1;
         }
     }
-    expect(samples >= 20, "空白格連片樣本數足夠");
-    expect(mismatch == 0, "連片結果必須與獨立洪水填充逐格一致");
-    expect(mine_opened == 0, "連片絕不能翻開雷");
-    expect(zero_samples >= 5, "顯示 0 的樣本數足夠");
-    expect(zero_cascaded == 0, "顯示 0 的格子絕不能連片");
-    std::printf("4 連片展開：空白樣本 %d，顯示 0 樣本 %d，不一致 %d，翻雷 %d\n", samples, zero_samples,
-                mismatch, mine_opened);
+    expect(samples >= 20, "enough blank-cell cascade samples");
+    expect(mismatch == 0, "cascade matches the independent flood fill cell by cell");
+    expect(mine_opened == 0, "a cascade never opens a mine");
+    expect(zero_samples >= 5, "enough samples of cells showing 0");
+    expect(zero_cascaded == 0, "a cell showing 0 never cascades");
+    std::printf("4 cascade: %d blank samples, %d zero samples, %d mismatches, %d mines opened\n", samples,
+                zero_samples, mismatch, mine_opened);
 }
 
-// ---- 4b. 大盤開局連片 ----
+// ---- 4b. Opening cascade on big boards ----
 void testBigCascade() {
     struct Shape {
         std::uint16_t w, h, m;
@@ -240,15 +243,15 @@ void testBigCascade() {
             }
         }
     }
-    expect(samples >= 72, "大盤連片樣本數足夠（6 種盤面 × 6 種子 × 4 開局格）");
-    expect(big >= 8, "大盤樣本裡應有真正的大連片（≥400 格）");
-    expect(mismatch == 0, "大盤開局連片必須與獨立洪水填充逐格一致");
-    expect(opened_mine == 0, "大盤連片也絕不能翻開雷");
-    std::printf("4b 大盤連片：樣本 %d，大連片 %d 次，一次最多翻開 %zu 格，逐格不一致 %d\n", samples, big, worst,
-                mismatch);
+    expect(samples >= 72, "enough big-board samples (6 shapes x 6 seeds x 4 start cells)");
+    expect(big >= 8, "some samples are real big cascades (>= 400 cells)");
+    expect(mismatch == 0, "big-board opening cascade matches the independent flood fill");
+    expect(opened_mine == 0, "big-board cascades never open a mine");
+    std::printf("4b big cascade: %d samples, %d big cascades, at most %zu cells at once, %d mismatches\n", samples,
+                big, worst, mismatch);
 }
 
-// ---- 5. 開局必定連片且不踩雷 ----
+// ---- 5. The opening click always cascades and is safe ----
 void testStart() {
     int bad = 0;
     for (std::uint32_t seed : {501u, 502u, 503u, 504u, 505u}) {
@@ -268,11 +271,11 @@ void testStart() {
             bad += gm.unmarked(t) != static_cast<std::int32_t>(gm.type_total[t]);
         }
     }
-    expect(bad == 0, "開局格必為空白格、必連片（≥9 格）且不踩雷；各類雷數已知");
-    std::printf("5 開局連片與分類計數：%s\n", bad == 0 ? "通過" : "失敗");
+    expect(bad == 0, "start cell is blank, cascades (>= 9 cells), is safe; per-type counts are known");
+    std::printf("5 opening cascade and per-type counts: %s\n", bad == 0 ? "ok" : "failed");
 }
 
-// ---- 6. 判據（圓複數模式）：與獨立實作一致 ----
+// ---- 6. Chord criterion (complex mode) matches an independent implementation ----
 void testJudge() {
     int mismatch = 0, pass = 0, total = 0;
     Game game;
@@ -299,13 +302,13 @@ void testJudge() {
         }
         for (std::size_t j = 0; j < game.n; ++j) game.setFlag(j, 0);
     }
-    expect(total > 50, "判據樣本數足夠");
-    expect(mismatch == 0, "判據結果必須與獨立實作一致");
-    expect(pass > 0, "判據應至少放行一部分組合");
-    std::printf("6 組合匹配判據：樣本 %d，放行 %d，不一致 %d\n", total, pass, mismatch);
+    expect(total > 50, "enough criterion samples");
+    expect(mismatch == 0, "the criterion matches the independent implementation");
+    expect(pass > 0, "the criterion lets some combinations through");
+    std::printf("6 combination criterion: %d samples, %d accepted, %d mismatches\n", total, pass, mismatch);
 }
 
-// ---- 7. 插旗不限量 + 循環順序 ----
+// ---- 7. Unlimited flags + cycle order ----
 void testFlags() {
     Game game;
     buildBoard(game, 9, 9, 10, kRandom, 701, 40);
@@ -313,10 +316,10 @@ void testFlags() {
     for (std::size_t i = 0; i < game.n; ++i) {
         if (game.open[i] == 0 && game.setFlag(i, 1)) ++placed;
     }
-    expect(placed > 0, "所有未翻開格都能插旗");
-    expect(game.flags_of[1] == placed, "計數與實際插旗數一致");
-    expect(game.unmarked(1) < 0, "插超後未標記數應為負數");
-    expect(game.flagsTotal() == placed, "flagsTotal 與實際插旗數一致");
+    expect(placed > 0, "every closed cell can be flagged");
+    expect(game.flags_of[1] == placed, "the counter matches the number of flags placed");
+    expect(game.unmarked(1) < 0, "over-flagging makes the unmarked count negative");
+    expect(game.flagsTotal() == placed, "flagsTotal matches the number of flags placed");
 
     std::size_t cell = 0;
     while (game.open[cell] != 0) ++cell;
@@ -326,24 +329,24 @@ void testFlags() {
         game.cycleFlag(cell);
         s = game.flag[cell];
     }
-    expect((seq == std::array<std::uint8_t, 6>{1, 2, 3, 4, 0, 1}), "右鍵循環必須是 1,2,3,4,0,1");
-    std::printf("7 插旗不限量：插了 %u 面\n", placed);
+    expect((seq == std::array<std::uint8_t, 6>{1, 2, 3, 4, 0, 1}), "right-click cycle is 1,2,3,4,0,1");
+    std::printf("7 unlimited flags: %u placed\n", placed);
 }
 
-// ---- 8. 旗子保護格子 ----
+// ---- 8. A flag protects its cell ----
 void testFlagProtection() {
     Game game;
     buildBoard(game, 9, 9, 10, kRandom, 801, 40);
     std::size_t cell = 0;
     while (!(game.open[cell] == 0 && game.mine[cell] == 0)) ++cell;
     game.setFlag(cell, 3);
-    expect(game.flags_of[3] == 1, "插旗後計數為 1");
+    expect(game.flags_of[3] == 1, "the counter is 1 after placing a flag");
     game.reveal(cell);
-    expect(game.open[cell] == 0, "插旗的格子翻不開");
-    expect(game.flag[cell] == 3, "翻不開時旗幟應原樣保留");
-    expect(game.flags_of[3] == 1, "翻不開時計數不動");
+    expect(game.open[cell] == 0, "a flagged cell cannot be opened");
+    expect(game.flag[cell] == 3, "the flag is kept when the cell cannot be opened");
+    expect(game.flags_of[3] == 1, "the counter does not change when the cell cannot be opened");
 
-    // 連片也不該把旗子吃掉
+    // A cascade must not eat flags either.
     std::size_t blank = 0, flagged_nbr = 0;
     bool found = false;
     for (std::size_t i = 0; i < game.n && !found; ++i) {
@@ -360,27 +363,27 @@ void testFlagProtection() {
     if (found) {
         game.setFlag(flagged_nbr, 1);
         game.reveal(blank);
-        expect(game.open[blank] == 1, "空白格應能翻開");
-        expect(game.open[flagged_nbr] == 0, "連片展開不該翻開插了旗的格子");
-        expect(game.flag[flagged_nbr] == 1, "連片展開不該清掉旗子");
+        expect(game.open[blank] == 1, "a blank cell can be opened");
+        expect(game.open[flagged_nbr] == 0, "a cascade does not open a flagged cell");
+        expect(game.flag[flagged_nbr] == 1, "a cascade does not clear a flag");
     }
     game.setFlag(cell, 0);
     game.reveal(cell);
-    expect(game.open[cell] == 1, "撤旗後應能翻開");
-    expect(game.flags_of[3] == 0, "撤旗後計數歸還");
-    std::printf("8 旗子保護格子（翻不開、連片也不碰）：完成\n");
+    expect(game.open[cell] == 1, "after removing the flag the cell can be opened");
+    expect(game.flags_of[3] == 0, "removing the flag gives the count back");
+    std::printf("8 flags protect cells (cannot open, cascades leave them alone): done\n");
 }
 
-// ---- 9. 勝負判定 ----
+// ---- 9. Win / lose ----
 void testWinLose() {
     Game game;
     buildBoard(game, 9, 9, 10, kRandom, 901, 40);
     for (std::size_t i = 0; i < game.n; ++i) {
         if (game.mine[i] == 0 && game.open[i] == 0) game.reveal(i);
     }
-    expect(game.win && game.over, "翻開所有非雷格必須判勝");
-    expect(game.msg == Msg::win, "勝利時回饋為 win");
-    expect(game.openedCount() == game.safeCount(), "勝利時已翻開格數 = 非雷格數");
+    expect(game.win && game.over, "opening every safe cell wins");
+    expect(game.msg == Msg::win, "feedback on a win is win");
+    expect(game.openedCount() == game.safeCount(), "on a win the number of open cells equals the number of safe cells");
 
     buildBoard(game, 9, 9, 10, kRandom, 902, 40);
     std::size_t left = 0;
@@ -388,21 +391,21 @@ void testWinLose() {
     for (std::size_t i = 0; i < game.n; ++i) {
         if (i != left && game.mine[i] == 0 && game.open[i] == 0) game.reveal(i);
     }
-    expect(!game.win, "還剩非雷格未翻開時不能判勝");
+    expect(!game.win, "no win while a safe cell is still closed");
 
     buildBoard(game, 9, 9, 10, kRandom, 903, 40);
     std::size_t m = 0;
     while (game.mine[m] == 0) ++m;
     game.reveal(m);
-    expect(game.over && !game.win, "翻開雷必須判負");
-    expect(game.boom == static_cast<std::int32_t>(m), "記錄踩中的格子");
-    expect(game.msg == Msg::lose, "失敗時回饋為 lose");
-    game.reveal(0);  // 結束後再操作不得改變局面
-    expect(game.boom == static_cast<std::int32_t>(m), "結束後的操作無效");
-    std::printf("9 勝負判定：完成\n");
+    expect(game.over && !game.win, "opening a mine loses");
+    expect(game.boom == static_cast<std::int32_t>(m), "the cell that was stepped on is recorded");
+    expect(game.msg == Msg::lose, "feedback on a loss is lose");
+    game.reveal(0);  // actions after the end must not change the position
+    expect(game.boom == static_cast<std::int32_t>(m), "actions after the end have no effect");
+    std::printf("9 win / lose: done\n");
 }
 
-// ---- 10. 展開：判據不過時棋盤不變 ----
+// ---- 10. Chord: a failed criterion leaves the board unchanged ----
 void testExpandGate() {
     Game game;
     buildBoard(game, 12, 12, 24, kRandom, 1001, 70);
@@ -419,15 +422,16 @@ void testExpandGate() {
     const Flags before = openSnapshot(game);
     game.tryExpand(cell);
     if (!game.matchComboTruth(cell)) {
-        expect(openSnapshot(game) == before, "判據不通過時展開不能改變棋盤");
-        expect(game.msg == Msg::judge_fail, "判據不通過時回饋為 judge_fail");
+        expect(openSnapshot(game) == before, "a failed criterion must not change the board");
+        expect(game.msg == Msg::judge_fail, "a failed criterion gives judge_fail feedback");
     }
-    std::printf("10 展開門禁：完成\n");
+    std::printf("10 chord gate: done\n");
 }
 
-// ---- 11. 閔可夫斯基模式 ----
+// ---- 11. Minkowski mode ----
 void testHyper() {
-    // 枚舉 495 種鄰域組合（四種雷的顆數 n1..n4，總數 ≤ 8）：兩套顯示值集合都算一遍
+    // Enumerate the 495 neighborhoods (counts n1..n4 of the four types, total <= 8) and collect
+    // the displayed values of both modes.
     std::array<bool, 65> seen_c{};
     std::array<bool, 129> seen_h{};
     int combos = 0;
@@ -441,22 +445,22 @@ void testHyper() {
                     seen_c[a * a + b * b] = true;
                     seen_h[a * a - b * b + 64] = true;
                 }
-    expect(combos == 495, "鄰域組合應枚舉出 495 種");
+    expect(combos == 495, "495 neighborhood combinations are enumerated");
     const auto cn = std::count(seen_c.begin(), seen_c.end(), true);
     const auto hn = std::count(seen_h.begin(), seen_h.end(), true);
-    expect(cn == static_cast<long>(ACHIEVABLE.size()), "圓複數模式的顯示值應為 24 個");
-    expect(hn == 39, "閔可夫斯基模式的顯示值應為 39 個");
+    expect(cn == static_cast<long>(ACHIEVABLE.size()), "complex mode has 24 displayed values");
+    expect(hn == 39, "Minkowski mode has 39 displayed values");
     bool cplx_ok = true;
     for (auto D : ACHIEVABLE) cplx_ok = cplx_ok && seen_c[D];
-    expect(cplx_ok, "圓複數模式的顯示值集合必須正好是 ACHIEVABLE 那 24 個");
+    expect(cplx_ok, "the complex-mode value set is exactly the 24 ACHIEVABLE values");
     const int MAG[] = {1, 3, 4, 5, 7, 8, 9, 12, 15, 16, 21, 24, 25, 32, 35, 36, 48, 49, 64};
     bool pair_ok = seen_h[64];
     for (int m : MAG) pair_ok = pair_ok && seen_h[m + 64] && seen_h[-m + 64];
-    expect(pair_ok, "閔可夫斯基模式應是 19 個模長各帶正負、外加一個 0");
-    std::printf("11 顯示值集合：組合 %d 種，圓複數 %ld 值，閔可夫斯基 %ld 值\n", combos, static_cast<long>(cn),
-                static_cast<long>(hn));
+    expect(pair_ok, "Minkowski mode is 19 magnitudes with both signs, plus a 0");
+    std::printf("11 displayed value sets: %d combinations, complex %ld values, Minkowski %ld values\n", combos,
+                static_cast<long>(cn), static_cast<long>(hn));
 
-    // 顯示值算法：a² − b²（圓複數模式是 a² + b²），負值照算
+    // Clue formula: a^2 - b^2 (a^2 + b^2 in complex mode); negative values are computed as is.
     Game h;
     h.mode = Mode::hyper;
     struct ClueCase {
@@ -474,119 +478,120 @@ void testHyper() {
         clue_bad += h.clue[12] != c.want;
         clue_bad += !seen_h[c.want + 64];
     }
-    expect(clue_bad == 0, "閔可夫斯基顯示值必須是 a² − b²（12 組配比逐一核對）");
+    expect(clue_bad == 0, "Minkowski clue is a^2 - b^2 (12 mine mixes checked one by one)");
     h.mode = Mode::complex;
     hyperPlace(h, {2, 1, 3, 1}, false);
-    expect(h.clue[12] == 5, "同一配比在圓複數模式下應是 a² + b²（1+4=5）");
+    expect(h.clue[12] == 5, "the same mix in complex mode is a^2 + b^2 (1 + 4 = 5)");
     h.mode = Mode::hyper;
 
-    // 判據：真值 = 一顆 +1 加一顆 +j（a=1、b=1、共 2 顆，顯示值 0）
+    // Criterion: truth = one +1 and one +j (a = 1, b = 1, two mines, displayed value 0).
     hyperPlace(h, {1, 0, 1, 0}, false);
-    expect(h.clue[12] == 0, "真值配比的顯示值應為 0");
+    expect(h.clue[12] == 0, "the true mix displays 0");
     hyperPlace(h, {1, 0, 1, 0}, true);
-    expect(h.matchComboTruth(12), "旗幟與真值一致時判據應通過");
+    expect(h.matchComboTruth(12), "the criterion passes when the flags equal the truth");
     hyperPlace(h, {0, 1, 0, 1}, true);
-    expect(h.matchComboTruth(12), "推薦判據允許 a、b 各自取負（四種符號組合）");
+    expect(h.matchComboTruth(12), "the recommended criterion lets a and b each flip sign (four sign combinations)");
     hyperPlace(h, {1, 1, 0, 0}, true);
-    expect(!h.matchComboTruth(12), "推薦判據：|a|、|b| 不相符必須擋住");
+    expect(!h.matchComboTruth(12), "recommended criterion: a mismatch in |a| or |b| is rejected");
     h.judge_loose = true;
-    expect(h.matchComboTruth(12), "備選判據：同旗數且 a²−b² 相同就應通過");
+    expect(h.matchComboTruth(12), "loose criterion: the same flag count and the same a^2 - b^2 passes");
     h.judge_loose = false;
     hyperPlace(h, {1, 0, 0, 0}, true);
-    expect(!h.matchComboTruth(12), "旗數與真實雷數不符必須擋住（兩種判據都一樣）");
+    expect(!h.matchComboTruth(12), "a flag count different from the mine count is rejected (both criteria)");
     hyperPlace(h, {2, 0, 0, 0}, false);
     hyperPlace(h, {1, 1, 0, 0}, true);
-    expect(!h.matchComboTruth(12), "旗數 2 = 2 但 |a| 不同（2 與 0）仍須擋住");
+    expect(!h.matchComboTruth(12), "2 flags = 2 mines but |a| differs (2 vs 0) is still rejected");
 
-    // 展開：判據過了就翻開其餘未插旗的鄰格
+    // Chord: when the criterion passes, the remaining unflagged neighbors are opened.
     hyperPlace(h, {1, 0, 1, 0}, false);
     hyperPlace(h, {1, 0, 1, 0}, true);
-    h.setFlag(80, 1);  // 遠處的格子插旗：連片繞開它，所以這一步展開不會把整盤翻完而判勝
+    h.setFlag(80, 1);  // a flag far away: the cascade goes around it, so this chord cannot open everything and win
     h.open[12] = 1;
     h.over = h.win = false;
     h.boom = -1;
     h.setMsg(Msg::none);
     h.tryExpand(12);
-    expect(h.msg == Msg::expand_ok && !h.win, "閔可夫斯基模式判據通過後展開應回饋 expand_ok");
-    expect(h.msg_arg == 6, "展開回饋帶著涉及的鄰格數（8 鄰格 − 2 面旗 = 6）");
-    expect(h.boom < 0, "鄰域裡的雷都插了旗，展開不該踩雷");
+    expect(h.msg == Msg::expand_ok && !h.win, "Minkowski chord with a passing criterion gives expand_ok");
+    expect(h.msg_arg == 6, "the feedback carries the neighbors involved (8 neighbors - 2 flags = 6)");
+    expect(h.boom < 0, "every mine around is flagged, so the chord must not hit a mine");
     bool opened_any = false;
     for (std::size_t i = 0; i < h.n; ++i) opened_any = opened_any || (i != 12 && h.open[i] != 0);
-    expect(opened_any, "判據通過後應真的翻開鄰格");
+    expect(opened_any, "a passing criterion really opens neighbors");
 
-    // 旗少插一面卻判據通過是不可能的；旗插錯位置則踩雷
+    // Flags on the wrong cells with a passing criterion: the chord hits a mine and loses.
     hyperPlace(h, {1, 0, 1, 0}, false);
     hyperPlace(h, {0, 0, 0, 0}, true);
     const Nbrs nb = h.nbrs(12);
-    std::size_t wrong1 = nb.cells[6], wrong2 = nb.cells[7];  // 雷在 slot 0、1，旗插到別處
+    std::size_t wrong1 = nb.cells[6], wrong2 = nb.cells[7];  // mines are in slots 0 and 1, flags go elsewhere
     h.setFlag(wrong1, 1);
     h.setFlag(wrong2, 3);
     h.open[12] = 1;
     h.over = h.win = false;
     h.tryExpand(12);
-    expect(h.over && !h.win && h.boom >= 0, "旗插錯位置、判據卻通過時，展開踩雷判負");
-    std::printf("11b/11c 閔可夫斯基顯示值算法與判據：完成\n");
+    expect(h.over && !h.win && h.boom >= 0, "flags on the wrong cells with a passing criterion: the chord loses");
+    std::printf("11b/11c Minkowski clue formula and criterion: done\n");
 }
 
-// ---- 12. 健壯性：越界與極端參數 ----
+// ---- 12. Robustness: out-of-range input and extreme parameters ----
 void testRobustness() {
     Game g;
     buildBoard(g, 9, 9, 10, kRandom, 1201, 40);
     const Flags before = openSnapshot(g);
     g.reveal(10000);
     g.tryExpand(10000);
-    expect(!g.cycleFlag(10000), "cycleFlag 越界回傳 false");
-    expect(!g.setFlag(10000, 1), "setFlag 越界回傳 false");
-    expect(!g.setFlag(0, 5), "setFlag 種類 > 4 回傳 false");
-    expect(!g.isBlank(10000) && g.nbrs(10000).size() == 0, "越界格子沒有鄰域、也不是空白格");
-    expect(openSnapshot(g) == before && !g.over, "越界操作不改變局面");
+    expect(!g.cycleFlag(10000), "cycleFlag out of range returns false");
+    expect(!g.setFlag(10000, 1), "setFlag out of range returns false");
+    expect(!g.setFlag(0, 5), "setFlag with a type > 4 returns false");
+    expect(!g.isBlank(10000) && g.nbrs(10000).size() == 0, "an out-of-range cell has no neighborhood and is not blank");
+    expect(openSnapshot(g) == before && !g.over, "out-of-range actions do not change the position");
     const auto seed_before = g.seed;
     g.startAt(10000, 0);
-    expect(g.seed == seed_before && g.started, "startAt 越界是無操作");
+    expect(g.seed == seed_before && g.started, "startAt out of range is a no-op");
 
-    // 超量的自訂配比：不崩潰、不超過可用格數
+    // An excessive custom ratio: no crash, never more mines than available cells.
     Game big;
     big.w = 40;
     big.h = 30;
     big.type_count = {0, 999, 999, 999, 999};
     big.newGame(5);
     big.startAt(0, 0);
-    expect(big.mines <= big.n - 4 && big.mines == big.typeSum(), "超量配比被截到可用格數");
-    expect(big.mine[0] == 0 && big.mine[1] == 0 && big.mine[40] == 0 && big.mine[41] == 0, "超量配比仍保留開局安全區");
+    expect(big.mines <= big.n - 4 && big.mines == big.typeSum(), "an excessive ratio is cut to the available cells");
+    expect(big.mine[0] == 0 && big.mine[1] == 0 && big.mine[40] == 0 && big.mine[41] == 0,
+           "an excessive ratio still keeps the safe zone around the start");
 
-    // 尺寸與雷數夾限
+    // Size and mine count are clamped.
     Game c;
     c.w = 0;
     c.h = 500;
     c.mines = 60000;
     c.newGame(1);
-    expect(c.w == 1 && c.h == MAX_H && c.n == MAX_H, "w、h 被夾進合法範圍");
-    expect(c.mines == MAX_MINES, "mines 被夾進 MAX_MINES");
+    expect(c.w == 1 && c.h == MAX_H && c.n == MAX_H, "w and h are clamped to legal ranges");
+    expect(c.mines == MAX_MINES, "mines is clamped to MAX_MINES");
 
-    // 最小盤面：1×1 沒有鄰居，翻開即勝
+    // Smallest board: 1x1 has no neighbors, opening it wins.
     Game one;
     one.w = 1;
     one.h = 1;
     one.mines = 0;
     one.newGame(1);
     one.startAt(0, 0);
-    expect(one.over && one.win, "1×1 無雷棋盤開局即勝");
+    expect(one.over && one.win, "a 1x1 board without mines is won at the first click");
 
-    // 3×3 且開局在中央：安全區吃掉整盤，一顆雷也放不下，開局即勝
+    // 3x3 with the first click in the center: the safe zone covers the whole board, no mine fits.
     Game tiny;
     tiny.w = 3;
     tiny.h = 3;
     tiny.mines = 5;
     tiny.newGame(1);
     tiny.startAt(4, 0);
-    expect(tiny.mines == 0 && tiny.over && tiny.win, "安全區吃滿整盤時雷數為 0 並直接勝利");
-    std::printf("12 健壯性：完成\n");
+    expect(tiny.mines == 0 && tiny.over && tiny.win, "when the safe zone fills the board there are 0 mines and it is won");
+    std::printf("12 robustness: done\n");
 }
 
 }  // namespace
 
 int main() {
-    std::printf("复扫雷 · 規則自檢（C++）\n==========================\n");
+    std::printf("Complexweeper rules self-test (C++)\n===================================\n");
     testDeterminism();
     testExactRatio();
     testPureSquares();
@@ -601,6 +606,6 @@ int main() {
     testHyper();
     testRobustness();
 
-    std::printf("\n斷言 %d 項，失敗 %d 項\n%s\n", g_checks, g_failed, g_failed == 0 ? "全部通過" : "存在失敗");
+    std::printf("\n%d checks, %d failed\n%s\n", g_checks, g_failed, g_failed == 0 ? "ALL PASSED" : "FAILURES");
     return g_failed == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
