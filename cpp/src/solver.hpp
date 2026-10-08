@@ -17,6 +17,11 @@
 //      holds for a subset of the constraints also holds for all of them.
 //   4. If nothing is certain, guess the closed cell with the lowest estimated mine probability.
 //
+// Flags of the player. Flags the player placed are taken over as if the solver had placed them
+// (they are not placed again, and they count against the number of mines left); a wrong type is
+// re-oriented like any other. If they contradict the numbers, the solver removes all flags in one
+// step (kind == clear) and carries on from the plain board.
+//
 // Flags. The solver places real typed flags on the game. The numbers can never tell the absolute
 // type of a mine: every connected component of mines can be negated, have its real and imaginary
 // parts negated separately and (in the complex mode) have the two parts swapped without changing
@@ -44,6 +49,7 @@ enum class MoveKind : std::uint8_t {
     open,
     mark,    // place a typed flag on a mine
     retype,  // no cell changed, but flags were re-oriented so that all numbers agree
+    clear,   // the flags contradicted the numbers: all of them were removed (retyped = how many)
 };
 enum class Reason : std::uint8_t {
     first_click,  // the game has not started: click the center (it and its neighbors are safe)
@@ -80,6 +86,11 @@ private:
     bool analyze(const Game& g);
     // Drop marks whose flag the player removed.
     void syncMarks(const Game& g);
+    // Takes over the flags the player placed: they count as mines the solver has already placed. Returns
+    // false if they cannot be right (more flags than mines, or the numbers contradict them).
+    bool adoptFlags(const Game& g);
+    // Removes every flag and forgets the solver's own marks. Returns how many flags were removed.
+    std::size_t clearFlags(Game& g);
     // The flag type for a new mine at `cell` (see the class comment).
     std::uint8_t chooseType(const Game& g, std::size_t cell) const;
     // Re-orient flags if the numbers contradict their current types. Returns how many flags

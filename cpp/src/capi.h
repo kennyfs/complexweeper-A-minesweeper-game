@@ -24,7 +24,8 @@ typedef struct {
     uint8_t reserved[2];
 } cw_cell;
 
-/* One solver step. kind: 0 nothing to do, 1 open, 2 flag a mine, 3 only re-orient flags.
+/* One solver step. kind: 0 nothing to do, 1 open, 2 flag a mine, 3 only re-orient flags,
+ * 4 all flags were removed because they contradicted the numbers (retyped = how many).
  * reason: 0 first click, 1 logically certain, 2 guess (risk = mine probability).
  * type: the flag type that was placed (kind 2). retyped: how many other flags changed type
  * because the numbers showed they had been oriented inconsistently. */

@@ -26,6 +26,12 @@ def python_trace(cfg):
         if mv is None:
             break
         moves.append([mv.kind, mv.cell, mv.reason, mv.type, mv.retyped, round(mv.risk, 4)])
+        if k == 10:
+            placed = 0
+            for i, c in enumerate(e.cells()):
+                if placed < 4 and not c.open and not c.flag and i % cfg["every"] == 0:
+                    e.cycle_flag(i)
+                    placed += 1
         if k == 20:
             for _ in range(5):
                 e.undo()
@@ -37,7 +43,7 @@ def python_trace(cfg):
 
 def main():
     per = int(sys.argv[1]) if len(sys.argv) > 1 else 6
-    configs = [{"mode": mode, "level": level, "seed": 1000 * level + 7 * i + 1 + mode, "orient": (i * 3 + mode) % 8}
+    configs = [{"mode": mode, "level": level, "seed": 1000 * level + 7 * i + 1 + mode, "orient": (i * 3 + mode) % 8, "every": 3 + i % 5}
                for mode in (0, 1) for level in (0, 1, 2) for i in range(per)]
     out = subprocess.run(["node", str(HERE / "trace.js"), json.dumps(configs)], check=True,
                          capture_output=True, text=True).stdout

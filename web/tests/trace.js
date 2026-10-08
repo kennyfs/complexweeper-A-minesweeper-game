@@ -22,6 +22,12 @@ const result = configs.map((cfg) => {
     const m = s.solverStep();
     if (m.kind === CW.KIND_NONE) break;
     moves.push([m.kind, m.cell, m.reason, m.type, m.retyped, Math.round(m.risk * 1e4) / 1e4]);
+    if (k === 10) {  // the player flags a few closed cells by hand (right and wrong ones)
+      let placed = 0;
+      for (let i = 0; i < s.game.n && placed < 4; i++) {
+        if (!s.game.open[i] && !s.game.flag[i] && i % cfg.every === 0) { s.cycleFlag(i); placed++; }
+      }
+    }
     if (k === 20) {  // undo / redo through the history must be exact
       for (let u = 0; u < 5; u++) s.undo();
       for (let u = 0; u < 5; u++) s.solverStep();

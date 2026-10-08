@@ -17,7 +17,7 @@ LIB_NAME = "libcomplexweeper_capi.so" if sys.platform != "darwin" else "libcompl
 # Game states returned by Engine.state
 READY, PLAYING, WON, LOST = 0, 1, 2, 3
 # Solver move kinds and reasons (see capi.h)
-KIND_NONE, KIND_OPEN, KIND_FLAG, KIND_RETYPE = 0, 1, 2, 3
+KIND_NONE, KIND_OPEN, KIND_FLAG, KIND_RETYPE, KIND_CLEAR = 0, 1, 2, 3, 4
 REASON_FIRST_CLICK, REASON_CERTAIN, REASON_GUESS = 0, 1, 2
 # Modes
 MODE_COMPLEX, MODE_HYPER = 0, 1

@@ -171,6 +171,11 @@ open number be satisfied, and when a newly opened number shows that two groups o
 oriented inconsistently, the affected flags are re-oriented in the same step. Because the rules
 accept any consistent labeling, a game that the solver survives ends in a win.
 
+Flags that you place yourself are taken over as if the solver had placed them: it does not place
+them again, and they count against the number of mines left. A wrong type is re-oriented like any
+other. If your flags contradict the numbers (too many flags, or no consistent reading), the solver
+removes **all** flags in one step and carries on from the plain board; undo brings them back.
+
 ### Difficulty presets
 
 The mine counts were tuned with `tools/tune_mines.py` so that the solver wins about 90% of its

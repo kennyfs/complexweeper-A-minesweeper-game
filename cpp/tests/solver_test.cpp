@@ -241,6 +241,52 @@ void testManualInterplay() {
     expect(steps > 0 && s.game.over, "the solver finishes a board that is full of flags");
     while (s.undoDepth() > 0) s.undo();
     expect(!s.game.started && depth > 0, "everything can be undone");
+
+    // Correct flags of the player are taken over: no clear step, and the solver still wins.
+    for (std::uint32_t seed = 1; seed <= 20; ++seed) {
+        Session a;
+        a.newGame(9, 9, 7, Mode::complex, seed);
+        a.solverStep(0);
+        for (int k = 0; k < 6; ++k) a.solverStep(0);
+        int by_hand = 0;
+        for (std::size_t i = 0; i < a.game.n && by_hand < 3; ++i) {
+            if (a.game.mine[i] != 0 && a.game.open[i] == 0 && a.game.flag[i] == 0) {
+                while (a.game.flag[i] != a.game.mine[i]) a.cycleFlag(i);  // the right type, placed by hand
+                ++by_hand;
+            }
+        }
+        bool cleared = false;
+        for (int k = 0; k < 500 && !a.game.over; ++k) {
+            const Move m = a.solverStep(0);
+            if (m.kind == MoveKind::none) break;
+            cleared = cleared || m.kind == MoveKind::clear;
+        }
+        expect(!cleared, "correct flags of the player do not cause a clear step");
+    }
+
+    // Contradicting flags: one clear step removes all of them, and the game can still be finished.
+    {
+        Session b;
+        b.newGame(9, 9, 7, Mode::complex, 5);
+        b.solverStep(0);
+        for (std::size_t i = 0; i < b.game.n; ++i) {
+            if (b.game.open[i] == 0 && b.game.flag[i] == 0) b.cycleFlag(i);  // flag every closed cell
+        }
+        const std::size_t depth = b.undoDepth();
+        const Move m = b.solverStep(0);
+        std::size_t left = 0;
+        for (std::size_t i = 0; i < b.game.n; ++i) left += b.game.flag[i] != 0;
+        expect(m.kind == MoveKind::clear && m.retyped > 0, "contradicting flags give a clear step");
+        expect(left == 0 && b.undoDepth() == depth + 1, "the clear step removes all flags and is one history entry");
+        b.undo();
+        std::size_t back = 0;
+        for (std::size_t i = 0; i < b.game.n; ++i) back += b.game.flag[i] != 0;
+        expect(back == m.retyped, "undoing a clear step brings the flags back");
+        for (int k = 0; k < 500 && !b.game.over; ++k) {
+            if (b.solverStep(0).kind == MoveKind::none) break;
+        }
+        expect(b.game.over, "the game can be finished afterwards");
+    }
     std::printf("  manual actions mixed with solver steps: done\n");
 }
 

@@ -340,6 +340,8 @@ class App:
         where = "(%d, %d)" % (mv.cell // w + 1, mv.cell % w + 1)
         step = "Step %d: " % self.eng.undo_depth
         reoriented = " Re-oriented %d flag%s." % (mv.retyped, "" if mv.retyped == 1 else "s") if mv.retyped else ""
+        if mv.kind == eng_mod.KIND_CLEAR:
+            return step + "the flags contradict the numbers, removed all %d of them." % mv.retyped
         if mv.kind == eng_mod.KIND_RETYPE:
             return step + "re-oriented %d flags so that every number agrees." % mv.retyped
         if mv.reason == eng_mod.REASON_FIRST_CLICK:
@@ -358,7 +360,7 @@ class App:
             self.stop_auto()
             self.say("The solver has no further move.")
             return False
-        if mv.kind == eng_mod.KIND_RETYPE:
+        if mv.kind in (eng_mod.KIND_RETYPE, eng_mod.KIND_CLEAR):
             self.highlight = None
         else:
             if mv.reason == eng_mod.REASON_FIRST_CLICK:

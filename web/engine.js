@@ -9,7 +9,7 @@
   const MAX_W = 40, MAX_H = 30, MAX_CELLS = MAX_W * MAX_H, MAX_MINES = 999;
   const MODE_COMPLEX = 0, MODE_HYPER = 1;
   const READY = 0, PLAYING = 1, WON = 2, LOST = 3;
-  const KIND_NONE = 0, KIND_OPEN = 1, KIND_FLAG = 2, KIND_RETYPE = 3;
+  const KIND_NONE = 0, KIND_OPEN = 1, KIND_FLAG = 2, KIND_RETYPE = 3, KIND_CLEAR = 4;
   const REASON_FIRST_CLICK = 0, REASON_CERTAIN = 1, REASON_GUESS = 2;
   const LEVEL_NAMES = ['Beginner', 'Intermediate', 'Expert'];
   // The four mine types as (real, imaginary).
@@ -632,6 +632,27 @@
       }
     }
 
+    // Takes over the flags the player placed, as if the solver had placed them. Returns false if they
+    // cannot be right (more flags than mines, or the numbers contradict them).
+    adoptFlags(g) {
+      let adopted = false;
+      for (let i = 0; i < g.n; i++) {
+        if (g.open[i] === 0 && g.flag[i] !== 0 && this.marks[i] === 0) { this.marks[i] = 1; adopted = true; }
+      }
+      if (!adopted) return true;
+      if (this.markCount() > g.mines) return false;
+      return propagate(build(g, this.marks, false));
+    }
+
+    // Removes every flag and forgets the solver's own marks. Returns how many flags were removed.
+    clearFlags(g) {
+      let removed = 0;
+      for (let i = 0; i < g.n; i++) if (g.flag[i] !== 0) { g.setFlag(i, 0); removed++; }
+      this.marks.fill(0);
+      this.queue = [];
+      return removed;
+    }
+
     chooseType(g, cell) {
       const order = typeOrder(g.mode, this.orientation);
       const P = build(g, this.marks, true);
@@ -812,6 +833,12 @@
         return m;
       }
       this.syncMarks(g);
+      const cleared = () => {
+        const m = makeMove(KIND_CLEAR, 0);
+        m.retyped = this.clearFlags(g);
+        return m;
+      };
+      if (!this.adoptFlags(g)) return cleared();
       for (let attempt = 0; attempt < 2; attempt++) {
         while (this.queue.length) {
           const m = this.queue.pop();
@@ -833,7 +860,10 @@
           }
           return m;
         }
-        if (!this.analyze(g)) break;
+        if (!this.analyze(g)) {
+          if (this.markCount() > 0) return cleared();  // the flags contradict the numbers
+          break;
+        }
       }
       // Nothing left to play: if every mine is flagged but the flags disagree with the numbers,
       // re-orient them with a much larger budget.
@@ -946,7 +976,7 @@
 
   const CW = {
     MODE_COMPLEX, MODE_HYPER, READY, PLAYING, WON, LOST,
-    KIND_NONE, KIND_OPEN, KIND_FLAG, KIND_RETYPE,
+    KIND_NONE, KIND_OPEN, KIND_FLAG, KIND_RETYPE, KIND_CLEAR,
     REASON_FIRST_CLICK, REASON_CERTAIN, REASON_GUESS,
     LEVEL_NAMES, preset, Rng, Game, Solver, Session,
   };

@@ -404,6 +404,33 @@ void Solver::syncMarks(const Game& g) {
     }
 }
 
+bool Solver::adoptFlags(const Game& g) {
+    bool adopted = false;
+    for (std::size_t i = 0; i < g.n; ++i) {
+        if (g.open[i] == 0 && g.flag[i] != 0 && marks_[i] == 0) {
+            marks_[i] = 1;
+            adopted = true;
+        }
+    }
+    if (!adopted) return true;
+    if (markCount() > g.mines) return false;
+    Problem P = build(g, marks_, false);
+    return propagate(P);
+}
+
+std::size_t Solver::clearFlags(Game& g) {
+    std::size_t removed = 0;
+    for (std::size_t i = 0; i < g.n; ++i) {
+        if (g.flag[i] != 0) {
+            g.setFlag(i, 0);
+            ++removed;
+        }
+    }
+    marks_.fill(0);
+    queue_.clear();
+    return removed;
+}
+
 std::uint8_t Solver::chooseType(const Game& g, std::size_t cell) const {
     const auto order = typeOrder(g.mode, orientation_);
     const Problem P = build(g, marks_, true);
@@ -642,6 +669,13 @@ Move Solver::step(Game& g, std::uint32_t now_ms) {
         return m;
     }
     syncMarks(g);
+    const auto cleared = [&] {
+        Move m;
+        m.kind = MoveKind::clear;
+        m.retyped = static_cast<std::uint16_t>(clearFlags(g));
+        return m;
+    };
+    if (!adoptFlags(g)) return cleared();
     for (int attempt = 0; attempt < 2; ++attempt) {
         while (!queue_.empty()) {
             Move m = queue_.back();
@@ -665,7 +699,10 @@ Move Solver::step(Game& g, std::uint32_t now_ms) {
             }
             return m;
         }
-        if (!analyze(g)) break;
+        if (!analyze(g)) {
+            if (markCount() > 0) return cleared();  // the flags contradict the numbers
+            break;
+        }
     }
     // Nothing left to play. If every mine is flagged but the flags still disagree with the
     // numbers, re-orient them, now with a much larger budget.

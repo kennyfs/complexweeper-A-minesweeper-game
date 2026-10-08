@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { Session, MODE_COMPLEX, MODE_HYPER, READY, PLAYING, WON, LOST } = CW;
-  const { KIND_OPEN, KIND_RETYPE, REASON_FIRST_CLICK, REASON_GUESS } = CW;
+  const { KIND_OPEN, KIND_RETYPE, KIND_CLEAR, REASON_FIRST_CLICK, REASON_GUESS } = CW;
 
   const MAX_CELL = 44;        // css pixels
   const MIN_CELL = 13;        // below this the board scrolls sideways instead of shrinking
@@ -214,6 +214,7 @@
     const where = '(' + (Math.floor(mv.cell / g.w) + 1) + ', ' + (mv.cell % g.w + 1) + ')';
     const step = 'Step ' + sess.undoDepth + ': ';
     const re = mv.retyped ? ' Re-oriented ' + mv.retyped + ' flag' + (mv.retyped === 1 ? '' : 's') + '.' : '';
+    if (mv.kind === KIND_CLEAR) return step + 'the flags contradict the numbers, removed all ' + mv.retyped + ' of them.';
     if (mv.kind === KIND_RETYPE) return step + 're-oriented ' + mv.retyped + ' flags so that every number agrees.';
     if (mv.reason === REASON_FIRST_CLICK) return step + 'first click in the middle ' + where + '. It and its neighbors are always safe.';
     if (mv.reason === REASON_GUESS) return step + 'guess ' + where + ', ' + Math.round(mv.risk * 100) + '% chance of a mine. Nothing is certain.' + re;
@@ -230,7 +231,7 @@
       refresh();
       return false;
     }
-    if (mv.kind === KIND_RETYPE) st.highlight = null;
+    if (mv.kind === KIND_RETYPE || mv.kind === KIND_CLEAR) st.highlight = null;
     else {
       const color = mv.reason === REASON_FIRST_CLICK ? COLOR_FIRST : mv.reason === REASON_GUESS ? COLOR_GUESS
         : mv.kind === KIND_OPEN ? COLOR_OPEN : COLOR_FLAG;
