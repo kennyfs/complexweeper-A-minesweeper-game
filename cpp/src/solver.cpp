@@ -69,7 +69,11 @@ struct Problem {
 };
 
 // fix_types: a marked cell is fixed to the type of its flag; otherwise it may be any mine type.
+// Once as many cells are marked as there are mines, every other cell is known to be safe.
 Problem build(const Game& g, const std::array<std::uint8_t, MAX_CELLS>& marks, bool fix_types) {
+    std::size_t placed = 0;
+    for (std::size_t i = 0; i < g.n; ++i) placed += marks[i] != 0;
+    const bool all_placed = placed >= g.mines;
     Problem P;
     P.mode = g.mode;
     P.var_of.assign(g.n, -1);
@@ -77,7 +81,7 @@ Problem build(const Game& g, const std::array<std::uint8_t, MAX_CELLS>& marks, b
         if (P.var_of[cell] < 0) {
             P.var_of[cell] = static_cast<int>(P.cell.size());
             P.cell.push_back(static_cast<std::uint16_t>(cell));
-            std::uint8_t d = 0b11111;
+            std::uint8_t d = all_placed ? 0b00001 : 0b11111;
             if (marks[cell] != 0) {
                 d = fix_types && g.flag[cell] >= 1 && g.flag[cell] <= 4 ? static_cast<std::uint8_t>(1u << g.flag[cell])
                                                                         : static_cast<std::uint8_t>(0b11110);
@@ -433,7 +437,9 @@ std::size_t Solver::clearFlags(Game& g) {
 
 std::uint8_t Solver::chooseType(const Game& g, std::size_t cell) const {
     const auto order = typeOrder(g.mode, orientation_);
-    const Problem P = build(g, marks_, true);
+    auto marks = marks_;
+    marks[cell] = 1;  // the new mine counts as placed
+    const Problem P = build(g, marks, true);
     const int v = P.var_of[cell];
     if (v < 0) return order[0];  // no open number touches this mine: any type will do
     std::vector<int> group_of;

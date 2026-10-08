@@ -290,6 +290,59 @@ void testManualInterplay() {
     std::printf("  manual actions mixed with solver steps: done\n");
 }
 
+// Once the last mine is flagged, the flags must reproduce every open number at once: the solver may not
+// leave a wrong flag type behind just because the remaining closed cells could still hide mines.
+bool flagsReproduceNumbers(const Game& g) {
+    for (std::size_t i = 0; i < g.n; ++i) {
+        if (!g.open[i] || g.mine[i]) continue;
+        const auto [a, b] = g.sumsOf(i, true);
+        if (g.valueOf(a, b) != g.clue[i]) return false;
+    }
+    return true;
+}
+
+void testLastFlagOrientation() {
+    std::uint32_t state = 12345;
+    const auto rnd = [&state](std::uint32_t n) {
+        state = state * 1664525u + 1013904223u;
+        return (state >> 8) % n;
+    };
+    int bad = 0, checked = 0;
+    for (int iter = 0; iter < 3000; ++iter) {
+        const int W = 4 + static_cast<int>(rnd(5)), H = 4 + static_cast<int>(rnd(4)), nm = 2 + static_cast<int>(rnd(6));
+        Session s;
+        s.setSolverOrientation(static_cast<int>(rnd(8)));
+        s.newGame(static_cast<std::uint16_t>(W), static_cast<std::uint16_t>(H), static_cast<std::uint16_t>(nm),
+                  rnd(2) ? Mode::hyper : Mode::complex, 1);
+        Game& g = s.game;
+        for (int placed = 0, tries = 0; placed < nm && tries < 200; ++tries) {
+            const std::size_t c = rnd(static_cast<std::uint32_t>(W * H));
+            if (!g.mine[c]) { g.mine[c] = static_cast<std::uint8_t>(1 + rnd(4)); ++placed; }
+        }
+        g.mines = static_cast<std::uint16_t>(nm);
+        g.computeClues();
+        g.countTypes();
+        g.started = true;
+        g.moves = 1;
+        for (std::size_t i = 0; i < g.n; ++i) if (!g.mine[i] && rnd(10) < 8) g.open[i] = 1;
+        for (std::size_t i = 0; i < g.n; ++i) if (g.mine[i] && rnd(2)) g.setFlag(i, static_cast<std::uint8_t>(1 + rnd(4)));
+        for (int k = 0; k < 12 && !g.over; ++k) {
+            const Move m = s.solverStep(0);
+            if (m.kind == MoveKind::none) break;
+            bool all_flagged = true;
+            for (std::size_t i = 0; i < g.n; ++i) all_flagged = all_flagged && (!g.mine[i] || g.flag[i] != 0);
+            bool no_wrong = true;
+            for (std::size_t i = 0; i < g.n; ++i) no_wrong = no_wrong && (g.flag[i] == 0 || g.mine[i] != 0);
+            if (m.kind == MoveKind::mark && all_flagged && no_wrong) {
+                ++checked;
+                bad += !flagsReproduceNumbers(g);
+            }
+        }
+    }
+    expect(checked > 100 && bad == 0, "when the last mine is flagged, all flag types agree with the numbers");
+    std::printf("  last flag orientation: done (%d situations)\n", checked);
+}
+
 }  // namespace
 
 int main() {
@@ -299,6 +352,7 @@ int main() {
     testStepGranularity();
     testOrientation();
     testManualInterplay();
+    testLastFlagOrientation();
     std::printf("\n%d checks, %d failed\n%s\n", g_checks, g_failed, g_failed == 0 ? "ALL PASSED" : "FAILURES");
     return g_failed == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

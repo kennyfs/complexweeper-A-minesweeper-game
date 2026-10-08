@@ -345,13 +345,17 @@
   }
 
   // One constraint = one open number.
+  // Once as many cells are marked as there are mines, every other cell is known to be safe.
   function build(g, marks, fixTypes) {
+    let placed = 0;
+    for (let i = 0; i < g.n; i++) placed += marks[i] !== 0 ? 1 : 0;
+    const allPlaced = placed >= g.mines;
     const P = { mode: g.mode, var_of: new Array(g.n).fill(-1), cell: [], dom: [], cons: [], cons_of: [] };
     const variable = (cell) => {
       if (P.var_of[cell] < 0) {
         P.var_of[cell] = P.cell.length;
         P.cell.push(cell);
-        let d = 0b11111;
+        let d = allPlaced ? 0b00001 : 0b11111;
         if (marks[cell] !== 0) {
           d = fixTypes && g.flag[cell] >= 1 && g.flag[cell] <= 4 ? (1 << g.flag[cell]) : 0b11110;
         }
@@ -660,7 +664,9 @@
 
     chooseType(g, cell) {
       const order = typeOrder(g.mode, this.orientation);
-      const P = build(g, this.marks, true);
+      const marks = this.marks.slice();
+      marks[cell] = 1;  // the new mine counts as placed
+      const P = build(g, marks, true);
       const v = P.var_of[cell];
       if (v < 0) return order[0];  // no open number touches this mine: any type will do
       const { groups, groupOf } = components(P);
