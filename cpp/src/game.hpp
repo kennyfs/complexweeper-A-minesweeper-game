@@ -37,12 +37,23 @@ struct Preset {
     std::string_view label;
 };
 
-// The three standard difficulties.
-inline constexpr std::array<Preset, 3> PRESETS{{
-    {9, 9, 10, "Beginner 9x9, 10 mines"},
-    {16, 16, 40, "Intermediate 16x16, 40 mines"},
-    {30, 16, 99, "Expert 30x16, 99 mines"},
+// The three difficulties of each mode. The mine counts are meant to make the solver win about half
+// of its games at every size and in both modes (see tools/tune_mines.py). PROVISIONAL: these are
+// the values of a quick local run (300 games per size, 95% CI contains 50%); replace them with
+// the output of a full tuning run.
+inline constexpr std::array<Preset, 3> PRESETS_COMPLEX{{
+    {9, 9, 12, "Beginner"},
+    {16, 16, 32, "Intermediate"},
+    {30, 16, 54, "Expert"},
 }};
+inline constexpr std::array<Preset, 3> PRESETS_HYPER{{
+    {9, 9, 12, "Beginner"},
+    {16, 16, 32, "Intermediate"},
+    {30, 16, 54, "Expert"},
+}};
+constexpr const std::array<Preset, 3>& presets(Mode mode) {
+    return mode == Mode::hyper ? PRESETS_HYPER : PRESETS_COMPLEX;
+}
 
 // Feedback about the last action (the wording belongs to the UI layer; this is just a code).
 enum class Msg : std::uint8_t {
@@ -54,18 +65,30 @@ enum class Msg : std::uint8_t {
     lose,
 };
 
-// mulberry32: the same seed gives the same sequence, hence the same board for the same first click.
+// PCG32 (XSH RR variant, by Melissa O'Neill): a small, fast generator with good statistical
+// quality. The same seed always gives the same sequence, hence the same board for the same first
+// click.
 class Rng {
 public:
-    explicit Rng(std::uint32_t seed = 1) : a_(seed == 0 ? 1 : seed) {}
+    // A game seed selects the state; the stream is fixed. Seed 0 is treated as 1.
+    explicit Rng(std::uint32_t seed = 1) { reseed(seed == 0 ? 1 : seed, kStream); }
+    // The generator's own seeding routine: `initstate` picks the starting point and `initseq` the
+    // stream (sequence).
+    Rng(std::uint64_t initstate, std::uint64_t initseq) { reseed(initstate, initseq); }
 
+    // 32 uniformly distributed bits.
+    [[nodiscard]] std::uint32_t nextU32();
     // Returns a value in [0, 1).
     [[nodiscard]] double next();
-    // Returns a value in [0, n), or 0 when n == 0.
+    // Returns a uniformly distributed value in [0, n) without modulo bias, or 0 when n == 0.
     [[nodiscard]] std::size_t below(std::size_t n);
 
 private:
-    std::uint32_t a_;
+    static constexpr std::uint64_t kStream = 0xda3e39cb94b95bdbULL;
+    void reseed(std::uint64_t initstate, std::uint64_t initseq);
+
+    std::uint64_t state_ = 0;
+    std::uint64_t inc_ = 1;
 };
 
 // Splits a total mine count as evenly as possible over the four types (indices 1..4; 0 unused).
@@ -161,7 +184,7 @@ public:
 
     // Places / changes / clears a flag (unlimited). t must be in 0..4, otherwise returns false.
     bool setFlag(std::size_t cell, std::uint8_t t);
-    // Right click cycle: none -> +1 -> -1 -> +i -> -i -> none.
+    // Right click cycle: none -> +1 -> -1 -> +i -> -i -> none. Flagging can win the game.
     bool cycleFlag(std::size_t cell);
     // Opens a cell; a flagged cell cannot be opened.
     void reveal(std::size_t cell);
@@ -173,7 +196,14 @@ public:
     [[nodiscard]] bool matchComboTruth(std::size_t cell) const;
     // Chord: if the criterion holds, open every unflagged neighbor; hitting a mine loses.
     void tryExpand(std::size_t cell);
+    // The game is won when the flags are exactly on the mines and the vectors of the flags around
+    // every open cell add up to the number shown on it. Flag types need not match how the board
+    // was generated: any labeling that reproduces all the numbers counts. Opening every safe cell
+    // does not win by itself; the mines must be flagged too.
     void checkWin();
+    [[nodiscard]] bool flagsSolve() const;
+    // Displayed value of a neighborhood whose mine vectors sum to (a, b).
+    [[nodiscard]] int valueOf(int a, int b) const;
     void lose(std::size_t cell);
 
     [[nodiscard]] std::size_t openedCount() const;

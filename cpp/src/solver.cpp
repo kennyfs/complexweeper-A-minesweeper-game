@@ -10,11 +10,15 @@
 namespace cw {
 namespace {
 
-// Node budgets for exhaustive enumeration. A whole component gets the larger budget; if that is
-// not enough we fall back to many small windows around single constraints.
+// Node budgets. A whole component gets the larger budget for counting; if that is not enough we
+// fall back to many small windows around single constraints. The other budgets are for finding
+// one consistent flag labeling, which is much cheaper because most types are already fixed.
 constexpr std::uint64_t kComponentBudget = 50000;
 constexpr std::uint64_t kWindowBudget = 10000;
 constexpr int kMaxWindowRadius = 2;
+constexpr std::uint64_t kTypeBudget = 20000;
+constexpr std::uint64_t kRepairBudget = 200000;
+constexpr std::uint64_t kFinalRepairBudget = 5000000;
 constexpr int kMaxNbr = 8;
 
 int clueValue(Mode mode, int a, int b) {
@@ -64,7 +68,8 @@ struct Problem {
     std::vector<std::vector<int>> cons_of;  // variable -> constraints that mention it
 };
 
-Problem build(const Game& g, const std::array<std::uint8_t, MAX_CELLS>& marks) {
+// fix_types: a marked cell is fixed to the type of its flag; otherwise it may be any mine type.
+Problem build(const Game& g, const std::array<std::uint8_t, MAX_CELLS>& marks, bool fix_types) {
     Problem P;
     P.mode = g.mode;
     P.var_of.assign(g.n, -1);
@@ -72,7 +77,12 @@ Problem build(const Game& g, const std::array<std::uint8_t, MAX_CELLS>& marks) {
         if (P.var_of[cell] < 0) {
             P.var_of[cell] = static_cast<int>(P.cell.size());
             P.cell.push_back(static_cast<std::uint16_t>(cell));
-            P.dom.push_back(marks[cell] != 0 ? 0b11110 : 0b11111);  // a marked cell is a mine
+            std::uint8_t d = 0b11111;
+            if (marks[cell] != 0) {
+                d = fix_types && g.flag[cell] >= 1 && g.flag[cell] <= 4 ? static_cast<std::uint8_t>(1u << g.flag[cell])
+                                                                        : static_cast<std::uint8_t>(0b11110);
+            }
+            P.dom.push_back(d);
             P.cons_of.emplace_back();
         }
         return P.var_of[cell];
@@ -174,9 +184,13 @@ bool propagate(Problem& P) {
 
 // ---- Exhaustive enumeration ----
 
+// Depth-first search over `vars` (in that order). Two uses:
+//  * counting: how many solutions have each variable at each value (cnt, total). With `sym`
+//    only one representative of every symmetry class is visited, weighted by the class size.
+//  * first_only: stop at the first solution (left in `val`), trying `prefer` values first.
 struct Enumeration {
     const Problem& P;
-    const std::vector<int>& vars;  // the variables to enumerate, in search order
+    const std::vector<int>& vars;
     std::uint64_t budget;
     std::vector<int> sa, sb, rem, nz;  // per-constraint running state
     std::vector<int> val;
@@ -185,21 +199,66 @@ struct Enumeration {
     std::uint64_t nodes = 0;
     bool aborted = false;
 
+    bool sym = false;
+    bool mine_seen = false, real_seen = false, imag_seen = false;
+
+    bool first_only = false;
+    bool done = false;
+    const std::vector<std::uint8_t>* prefer = nullptr;  // variable -> preferred value (0 = none)
+
     Enumeration(const Problem& p, const std::vector<int>& v, std::uint64_t b)
         : P(p), vars(v), budget(b), sa(p.cons.size(), 0), sb(p.cons.size(), 0), rem(p.cons.size(), 0),
           nz(p.cons.size(), 0), val(p.cell.size(), 0), cnt(p.cell.size()) {
         for (std::size_t i = 0; i < p.cons.size(); ++i) rem[i] = p.cons[i].n;
     }
 
+    // Symmetry breaking. The symmetries of a component are: negate the real part, negate the
+    // imaginary part, and (complex mode only) swap the two. Canonical representative:
+    //   complex mode:   the first mine is +1 and the first imaginary-axis mine is +i;
+    //   Minkowski mode: the first real-axis mine is +1 and the first j-axis mine is +j.
+    bool allowed(int t) const {
+        if (!sym || t == 0) return true;
+        const bool imag = t >= 3;
+        if (P.mode == Mode::complex) {
+            if (!mine_seen) return t == 1;
+            if (imag && !imag_seen) return t == 3;
+            return true;
+        }
+        if (!imag && !real_seen) return t == 1;
+        if (imag && !imag_seen) return t == 3;
+        return true;
+    }
+
+    // Number of solutions a canonical solution stands for (the size of its symmetry class).
+    std::uint64_t weight() const {
+        if (!sym) return 1;
+        if (P.mode == Mode::complex) return !mine_seen ? 1 : (imag_seen ? 8 : 4);
+        return real_seen && imag_seen ? 4 : (real_seen || imag_seen ? 2 : 1);
+    }
+
     void dfs(std::size_t k) {
         if (k == vars.size()) {
-            ++total;
-            for (int v : vars) ++cnt[v][val[v]];
+            if (first_only) {
+                done = true;
+                return;
+            }
+            const std::uint64_t w = weight();
+            total += w;
+            for (int v : vars) cnt[v][val[v]] += w;
             return;
         }
         const int v = vars[k];
-        for (int t = 0; t <= 4 && !aborted; ++t) {
-            if (((P.dom[v] >> t) & 1) == 0) continue;
+        std::array<int, 5> order{};
+        int no = 0;
+        const int pref = prefer ? (*prefer)[v] : 0;
+        const bool has_pref = pref != 0 && ((P.dom[v] >> pref) & 1) != 0;
+        if (has_pref) order[no++] = pref;
+        for (int t = 0; t <= 4; ++t) {
+            if (((P.dom[v] >> t) & 1) != 0 && !(has_pref && t == pref)) order[no++] = t;
+        }
+        for (int oi = 0; oi < no && !aborted && !done; ++oi) {
+            const int t = order[oi];
+            if (!allowed(t)) continue;
             if (++nodes > budget) {
                 aborted = true;
                 return;
@@ -223,7 +282,15 @@ struct Enumeration {
             }
             if (ok) {
                 val[v] = t;
+                const bool m0 = mine_seen, r0 = real_seen, i0 = imag_seen;
+                if (t != 0) {
+                    mine_seen = true;
+                    (t >= 3 ? imag_seen : real_seen) = true;
+                }
                 dfs(k + 1);
+                mine_seen = m0;
+                real_seen = r0;
+                imag_seen = i0;
             }
             for (int ci : P.cons_of[v]) {
                 sa[ci] -= da;
@@ -240,7 +307,7 @@ struct Enumeration {
 // What the enumerations have learned, indexed by variable of the full problem.
 struct Findings {
     std::vector<char> safe, mine;
-    std::vector<char> known_mine;  // already marked: finding "this is a mine" again is not news
+    std::vector<char> known_mine;  // already flagged: finding "this is a mine" again is not news
     std::vector<float> prob;       // exact mine probability from a complete enumeration, or -1
     bool any = false;
 
@@ -307,39 +374,146 @@ std::vector<int> window(const Problem& P, int center, int radius) {
     return ids;
 }
 
+// The mine types in the order the solver prefers them for a given orientation. order[0] is the
+// type of the first mine of a component, order[2] the type of the first mine on the other axis.
+// Real parts negate (1 <-> 2), imaginary parts negate (3 <-> 4), axes swap (1 <-> 3, 2 <-> 4).
+std::array<std::uint8_t, 4> typeOrder(Mode mode, int orientation) {
+    const bool flip_real = (orientation & 1) != 0;
+    const bool flip_imag = (orientation & 2) != 0;
+    const bool swap_axes = mode == Mode::complex && (orientation & 4) != 0;
+    std::array<std::uint8_t, 4> order{};
+    for (int k = 0; k < 4; ++k) {
+        int t = k + 1;
+        if (flip_real) t = t == 1 ? 2 : (t == 2 ? 1 : t);
+        if (flip_imag) t = t == 3 ? 4 : (t == 4 ? 3 : t);
+        if (swap_axes) t = t == 1 ? 3 : (t == 3 ? 1 : (t == 2 ? 4 : (t == 4 ? 2 : t)));
+        order[k] = static_cast<std::uint8_t>(t);
+    }
+    return order;
+}
+
 }  // namespace
 
 std::size_t Solver::markCount() const {
     return static_cast<std::size_t>(std::count_if(marks_.begin(), marks_.end(), [](auto m) { return m != 0; }));
 }
 
+void Solver::syncMarks(const Game& g) {
+    for (std::size_t i = 0; i < g.n; ++i) {
+        if (marks_[i] != 0 && (g.open[i] != 0 || g.flag[i] == 0)) marks_[i] = 0;
+    }
+}
+
+std::uint8_t Solver::chooseType(const Game& g, std::size_t cell) const {
+    const auto order = typeOrder(g.mode, orientation_);
+    const Problem P = build(g, marks_, true);
+    const int v = P.var_of[cell];
+    if (v < 0) return order[0];  // no open number touches this mine: any type will do
+    std::vector<int> group_of;
+    const auto comps = components(P, group_of);
+    const std::vector<int>& comp = comps[group_of[v]];
+    for (std::uint8_t t : order) {
+        Problem Q = P;
+        Q.dom[v] = static_cast<std::uint8_t>(1u << t);
+        if (!propagate(Q)) continue;
+        Enumeration e(Q, comp, kTypeBudget);
+        e.first_only = true;
+        e.dfs(0);
+        if (e.done || e.aborted) return t;  // out of budget: assume it works
+    }
+    return order[0];
+}
+
+std::size_t Solver::repair(Game& g, std::uint64_t budget) {
+    if (markCount() == 0) return 0;
+    Problem P = build(g, marks_, true);
+    if (propagate(P)) return 0;  // as far as propagation can tell the current labeling is fine
+
+    Problem Q = build(g, marks_, false);
+    if (!propagate(Q)) return 0;  // the mine positions themselves are contradictory: not our job
+    std::vector<int> group_of;
+    const auto comps = components(Q, group_of);
+    std::size_t changed = 0;
+    for (const auto& comp : comps) {
+        // Search with the flagged cells first and their current types first, so that a labeling
+        // that can stay as it is does stay.
+        std::vector<int> order;
+        std::vector<std::uint8_t> prefer(Q.cell.size(), 0);
+        for (int v : comp) {
+            if (marks_[Q.cell[v]] != 0) {
+                order.push_back(v);
+                prefer[v] = g.flag[Q.cell[v]];
+            }
+        }
+        if (order.empty()) continue;
+        for (int v : comp) {
+            if (marks_[Q.cell[v]] == 0) order.push_back(v);
+        }
+        Enumeration e(Q, order, budget);
+        e.first_only = true;
+        e.prefer = &prefer;
+        e.dfs(0);
+        if (!e.done) continue;
+        for (int v : comp) {
+            const std::size_t cell = Q.cell[v];
+            if (marks_[cell] != 0 && g.flag[cell] != e.val[v]) {
+                g.setFlag(cell, static_cast<std::uint8_t>(e.val[v]));
+                ++changed;
+            }
+        }
+    }
+    return changed;
+}
+
 bool Solver::analyze(const Game& g) {
-    Problem P = build(g, marks_);
+    Problem P = build(g, marks_, false);
     if (!propagate(P)) return false;  // contradictory information (should not happen)
     const int nv = static_cast<int>(P.cell.size());
 
-    // Level 1: whatever constraint propagation already decided.
     Findings F(static_cast<std::size_t>(nv));
     for (int v = 0; v < nv; ++v) F.known_mine[v] = marks_[P.cell[v]] != 0;
+    std::vector<Move> extra_opens, extra_mines;  // moves for cells that are not on the frontier
+
+    // Level 1: whatever constraint propagation already decided.
     bool decided = false;
     for (int v = 0; v < nv; ++v) {
         if (P.dom[v] == 1) {
             F.safe[v] = 1;
             decided = true;
         } else if ((P.dom[v] & 1) == 0 && marks_[P.cell[v]] == 0) {
-            // Only a mine that is not marked yet counts; a marked cell's domain already excludes 0.
+            // Only a mine that is not flagged yet counts; a flagged cell's domain already excludes 0.
             F.mine[v] = 1;
             decided = true;
         }
     }
 
-    // Level 2: exhaustive enumeration, which also yields mine probabilities for guessing.
+    // Level 2: the total mine count. If no mine is left, every closed cell is safe; if as many
+    // mines are left as closed cells, every closed cell is a mine.
+    if (!decided) {
+        std::size_t closed = 0;
+        for (std::size_t i = 0; i < g.n; ++i) closed += g.open[i] == 0 && marks_[i] == 0;
+        const std::size_t placed = markCount();
+        const std::size_t left = g.mines > placed ? g.mines - placed : 0;
+        if (closed > 0 && (left == 0 || left == closed)) {
+            for (std::size_t i = 0; i < g.n; ++i) {
+                if (g.open[i] != 0 || marks_[i] != 0) continue;
+                Move m;
+                m.kind = left == 0 ? MoveKind::open : MoveKind::mark;
+                m.cell = static_cast<std::uint16_t>(i);
+                (left == 0 ? extra_opens : extra_mines).push_back(m);
+            }
+            decided = true;
+        }
+    }
+
+    // Level 3: exhaustive enumeration, which also yields mine probabilities for guessing.
     if (!decided) {
         std::vector<int> group_of;
         const auto comps = components(P, group_of);
         std::vector<int> too_big;
         for (std::size_t ci = 0; ci < comps.size(); ++ci) {
             Enumeration e(P, comps[ci], kComponentBudget);
+            e.sym = true;
             e.dfs(0);
             if (e.aborted) {
                 too_big.push_back(static_cast<int>(ci));
@@ -366,6 +540,7 @@ bool Solver::analyze(const Game& g) {
                         std::vector<int> all(back.size());
                         std::iota(all.begin(), all.end(), 0);
                         Enumeration e(Q, all, kWindowBudget);
+                        e.sym = true;
                         e.dfs(0);
                         if (!e.complete()) continue;
                         for (std::size_t i = 0; i < back.size(); ++i) F.add(back[i], e.cnt[i][0], e.total);
@@ -376,9 +551,9 @@ bool Solver::analyze(const Game& g) {
     }
 
     if (F.any || decided) {
-        // Open the safe cells first (that makes progress), then mark mines. queue_ is consumed
+        // Open the safe cells first (that makes progress), then flag mines. queue_ is consumed
         // from the back, so insert in reverse.
-        std::vector<Move> opens, mines;
+        std::vector<Move> opens = extra_opens, mines = extra_mines;
         for (int v = 0; v < nv; ++v) {
             if (F.safe[v] && !F.mine[v]) {
                 Move m;
@@ -400,7 +575,7 @@ bool Solver::analyze(const Game& g) {
         }
     }
 
-    // Level 3: guess. Frontier cells with an exact probability use it. Everything else (cells
+    // Level 4: guess. Frontier cells with an exact probability use it. Everything else (cells
     // away from the frontier and frontier cells of components that were too big) is estimated
     // with the same density: (mines not accounted for) / (cells not accounted for).
     double exact_mines = 0.0;
@@ -441,7 +616,7 @@ bool Solver::analyze(const Game& g) {
         m.cell = static_cast<std::uint16_t>(outside_best);
         m.risk = static_cast<float>(density);
     } else {
-        // Only frontier cells of oversized components are left: take the first unmarked one.
+        // Only frontier cells of oversized components are left: take the first unflagged one.
         int any = -1;
         for (int v = 0; v < nv && any < 0; ++v) {
             if (marks_[P.cell[v]] == 0 && F.prob[v] < 0) any = v;
@@ -466,20 +641,40 @@ Move Solver::step(Game& g, std::uint32_t now_ms) {
         g.startAt(m.cell, now_ms);
         return m;
     }
+    syncMarks(g);
     for (int attempt = 0; attempt < 2; ++attempt) {
         while (!queue_.empty()) {
-            const Move m = queue_.back();
+            Move m = queue_.back();
             queue_.pop_back();
             if (g.open[m.cell] != 0 || marks_[m.cell] != 0) continue;  // already handled
             if (m.kind == MoveKind::open) {
                 if (g.flag[m.cell] != 0) g.setFlag(m.cell, 0);  // a flag the player placed must not block the solver
                 g.reveal(m.cell);
+                if (!g.over) {
+                    // A new number may show that earlier flags were oriented inconsistently.
+                    m.retyped = static_cast<std::uint16_t>(repair(g, kRepairBudget));
+                    if (m.retyped != 0) g.checkWin();
+                }
             } else {
+                m.type = chooseType(g, m.cell);
+                g.setFlag(m.cell, m.type);
                 marks_[m.cell] = 1;
+                m.retyped = static_cast<std::uint16_t>(repair(g, kRepairBudget));
+                m.type = g.flag[m.cell];  // re-orienting may have changed this flag too
+                g.checkWin();
             }
             return m;
         }
-        if (!analyze(g)) return {};
+        if (!analyze(g)) break;
+    }
+    // Nothing left to play. If every mine is flagged but the flags still disagree with the
+    // numbers, re-orient them, now with a much larger budget.
+    Move m;
+    m.retyped = static_cast<std::uint16_t>(repair(g, kFinalRepairBudget));
+    if (m.retyped != 0) {
+        m.kind = MoveKind::retype;
+        g.checkWin();
+        return m;
     }
     return {};
 }

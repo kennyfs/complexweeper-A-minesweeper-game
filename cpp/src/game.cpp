@@ -8,17 +8,43 @@ namespace cw {
 
 // ------------------------------------------------------------------ Rng
 
+void Rng::reseed(std::uint64_t initstate, std::uint64_t initseq) {
+    state_ = 0;
+    inc_ = (initseq << 1u) | 1u;
+    (void)nextU32();
+    state_ += initstate;
+    (void)nextU32();
+}
+
+std::uint32_t Rng::nextU32() {
+    const std::uint64_t oldstate = state_;
+    // Advance the internal state.
+    state_ = oldstate * 6364136223846793005ULL + (inc_ | 1u);
+    // Output function XSH RR: xorshift high bits, then a data-dependent rotation.
+    const auto xorshifted = static_cast<std::uint32_t>(((oldstate >> 18u) ^ oldstate) >> 27u);
+    const auto rot = static_cast<std::uint32_t>(oldstate >> 59u);
+    return (xorshifted >> rot) | (xorshifted << ((~rot + 1u) & 31u));
+}
+
 double Rng::next() {
-    a_ += 0x6D2B79F5u;
-    std::uint32_t t = a_;
-    t = (t ^ (t >> 15)) * (t | 1u);
-    t ^= t + ((t ^ (t >> 7)) * (t | 61u));
-    return static_cast<double>(t ^ (t >> 14)) / 4294967296.0;
+    return static_cast<double>(nextU32()) / 4294967296.0;
 }
 
 std::size_t Rng::below(std::size_t n) {
     if (n == 0) return 0;
-    return static_cast<std::size_t>(next() * static_cast<double>(n));
+    // Lemire's nearly divisionless method: multiply, keep the high word, and reject the few
+    // low products that would make some results more likely than others.
+    const auto bound = static_cast<std::uint32_t>(n);
+    std::uint64_t m = static_cast<std::uint64_t>(nextU32()) * bound;
+    auto low = static_cast<std::uint32_t>(m);
+    if (low < bound) {
+        const std::uint32_t threshold = (0u - bound) % bound;
+        while (low < threshold) {
+            m = static_cast<std::uint64_t>(nextU32()) * bound;
+            low = static_cast<std::uint32_t>(m);
+        }
+    }
+    return static_cast<std::size_t>(m >> 32u);
 }
 
 std::array<std::uint16_t, 5> splitEvenly(std::uint16_t total) {
@@ -209,7 +235,7 @@ void Game::computeClues() {
             continue;
         }
         const auto [a, b] = sumsOf(i, false);
-        clue[i] = static_cast<std::int16_t>(mode == Mode::hyper ? a * a - b * b : a * a + b * b);
+        clue[i] = static_cast<std::int16_t>(valueOf(a, b));
     }
 }
 
@@ -272,6 +298,7 @@ bool Game::cycleFlag(std::size_t cell) {
     if (!validCell(cell) || over || open[cell] != 0) return false;
     setFlag(cell, static_cast<std::uint8_t>((flag[cell] + 1) % 5));
     ++moves;
+    checkWin();
     return true;
 }
 
@@ -329,10 +356,24 @@ void Game::tryExpand(std::size_t cell) {
 
 // ------------------------------------------------------------------ Win / lose and statistics
 
-void Game::checkWin() {
+int Game::valueOf(int a, int b) const {
+    return mode == Mode::hyper ? a * a - b * b : a * a + b * b;
+}
+
+bool Game::flagsSolve() const {
     for (std::size_t i = 0; i < n; ++i) {
-        if (mine[i] == 0 && open[i] == 0) return;
+        if ((mine[i] != 0) != (flag[i] != 0)) return false;  // flags must sit exactly on the mines
     }
+    for (std::size_t i = 0; i < n; ++i) {
+        if (open[i] == 0 || mine[i] != 0) continue;
+        const auto [a, b] = sumsOf(i, true);
+        if (valueOf(a, b) != clue[i]) return false;  // the flags must reproduce the shown number
+    }
+    return true;
+}
+
+void Game::checkWin() {
+    if (over || !flagsSolve()) return;
     over = true;
     win = true;
     setMsg(Msg::win);

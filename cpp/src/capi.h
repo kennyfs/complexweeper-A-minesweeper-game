@@ -18,19 +18,22 @@ typedef struct cw_session cw_session;
 typedef struct {
     int16_t clue;     /* displayed value of an open cell; -1 for a closed cell */
     uint8_t open;     /* 1 = open */
-    uint8_t flag;     /* the player's flag: 0 none, 1..4 flag type */
+    uint8_t flag;     /* flag on the cell (player's or solver's): 0 none, 1..4 flag type */
     uint8_t mine;     /* only after the game is over: 0 no mine, 1..4 mine type */
-    uint8_t mark;     /* 1 = the solver has marked this cell as a mine */
     uint8_t blank;    /* open and no mines around at all (different from a displayed 0) */
-    uint8_t reserved;
+    uint8_t reserved[2];
 } cw_cell;
 
-/* One solver step. kind: 0 nothing to do, 1 open, 2 mark as mine.
- * reason: 0 first click, 1 logically certain, 2 guess (risk = mine probability). */
+/* One solver step. kind: 0 nothing to do, 1 open, 2 flag a mine, 3 only re-orient flags.
+ * reason: 0 first click, 1 logically certain, 2 guess (risk = mine probability).
+ * type: the flag type that was placed (kind 2). retyped: how many other flags changed type
+ * because the numbers showed they had been oriented inconsistently. */
 typedef struct {
     int32_t kind;
     int32_t cell;
     int32_t reason;
+    int32_t type;
+    int32_t retyped;
     float risk;
 } cw_move;
 
@@ -41,6 +44,13 @@ void cw_destroy(cw_session* s);
  * cw_width() etc. */
 void cw_new_game(cw_session* s, int w, int h, int mines, int mode, uint32_t seed);
 void cw_set_judge_loose(cw_session* s, int loose);
+/* Which of the equivalent flag labelings the solver produces: 0..7 (0..3 are used in mode 1).
+ * 0 is canonical: the first mine is +1 and the first mine on the other axis is +i / +j. */
+void cw_set_solver_orientation(cw_session* s, int orientation);
+
+/* The tuned difficulty presets: level 0 = Beginner, 1 = Intermediate, 2 = Expert.
+ * Returns 1 and fills the outputs, or 0 if mode / level is out of range. */
+int cw_preset(int mode, int level, int* w, int* h, int* mines);
 
 int cw_width(const cw_session* s);
 int cw_height(const cw_session* s);
@@ -50,7 +60,7 @@ int cw_mode(const cw_session* s);
 int cw_state(const cw_session* s);
 /* The cell that was stepped on, or -1 */
 int cw_boom_cell(const cw_session* s);
-/* Number of cells with a player flag or a solver mark */
+/* Number of flagged cells */
 int cw_marked_count(const cw_session* s);
 /* Number of steps that can be undone */
 int cw_undo_depth(const cw_session* s);

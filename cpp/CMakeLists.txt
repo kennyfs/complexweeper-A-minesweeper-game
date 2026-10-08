@@ -24,3 +24,8 @@ add_test(NAME game_test COMMAND game_test)
 add_executable(solver_test tests/solver_test.cpp)
 target_link_libraries(solver_test PRIVATE complexweeper_core)
 add_test(NAME solver_test COMMAND solver_test)
+
+# Command line tool that measures the solver's win rate (used by tools/tune_mines.py)
+find_package(Threads REQUIRED)
+add_executable(winrate tools/winrate.cpp)
+target_link_libraries(winrate PRIVATE complexweeper_core Threads::Threads)

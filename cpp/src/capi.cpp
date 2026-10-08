@@ -38,6 +38,19 @@ void cw_set_judge_loose(cw_session* s, int loose) {
     s->s.game.judge_loose = loose != 0;
 }
 
+void cw_set_solver_orientation(cw_session* s, int orientation) {
+    s->s.setSolverOrientation(orientation);
+}
+
+int cw_preset(int mode, int level, int* w, int* h, int* mines) {
+    if ((mode != 0 && mode != 1) || level < 0 || level >= 3) return 0;
+    const cw::Preset& p = cw::presets(mode == 1 ? cw::Mode::hyper : cw::Mode::complex)[static_cast<std::size_t>(level)];
+    if (w) *w = p.w;
+    if (h) *h = p.h;
+    if (mines) *mines = p.mines;
+    return 1;
+}
+
 int cw_width(const cw_session* s) { return s->s.game.w; }
 int cw_height(const cw_session* s) { return s->s.game.h; }
 int cw_mines(const cw_session* s) { return s->s.game.mines; }
@@ -62,9 +75,8 @@ void cw_get_cells(const cw_session* s, cw_cell* out) {
         out[i].open = g.open[i];
         out[i].flag = g.flag[i];
         out[i].mine = g.over ? g.mine[i] : 0;  // never leak mines while the game is running
-        out[i].mark = s->s.solver.isMarked(i) ? 1 : 0;
         out[i].blank = opened && g.isBlank(i) ? 1 : 0;
-        out[i].reserved = 0;
+        out[i].reserved[0] = out[i].reserved[1] = 0;
     }
 }
 
@@ -86,6 +98,8 @@ int cw_solver_step(cw_session* s, uint32_t now_ms, cw_move* out) {
         out->kind = static_cast<int32_t>(m.kind);
         out->cell = m.cell;
         out->reason = static_cast<int32_t>(m.reason);
+        out->type = m.type;
+        out->retyped = m.retyped;
         out->risk = m.risk;
     }
     return m.kind != cw::MoveKind::none ? 1 : 0;

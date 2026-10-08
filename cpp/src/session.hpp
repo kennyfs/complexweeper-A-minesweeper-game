@@ -20,8 +20,13 @@ public:
     Game game;
     Solver solver;
 
-    // Start a new game and clear the history and the solver state.
+    // Start a new game and clear the history and the solver state. The solver orientation is kept.
     void newGame(std::uint16_t w, std::uint16_t h, std::uint16_t mines, Mode mode, std::uint32_t seed);
+    // Which of the equivalent flag labelings the solver produces (see Solver::setOrientation).
+    void setSolverOrientation(int orientation) {
+        orientation_ = orientation & 7;
+        solver.setOrientation(orientation_);
+    }
 
     // Manual actions, same meaning as the Game functions of the same name.
     // They return true if the position actually changed.
@@ -35,7 +40,7 @@ public:
     bool undo();
     std::size_t undoDepth() const { return history_.size(); }
 
-    // Cells that carry a player flag or a solver mark (for the "mines left" display).
+    // Number of flagged cells (for the "mines left" display).
     std::size_t markedCount() const;
 
 private:
@@ -52,6 +57,7 @@ private:
 
     std::deque<Snapshot> history_;
     std::size_t limit_;
+    int orientation_ = 0;
 };
 
 }  // namespace cw

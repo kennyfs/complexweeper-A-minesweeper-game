@@ -11,6 +11,7 @@ void Session::newGame(std::uint16_t w, std::uint16_t h, std::uint16_t mines, Mod
     game.mode = mode;
     game.newGame(seed);
     solver = Solver{};
+    solver.setOrientation(orientation_);
     history_.clear();
 }
 
@@ -77,7 +78,7 @@ bool Session::undo() {
 
 std::size_t Session::markedCount() const {
     std::size_t k = 0;
-    for (std::size_t i = 0; i < game.n; ++i) k += (game.flag[i] != 0 || solver.isMarked(i));
+    for (std::size_t i = 0; i < game.n; ++i) k += game.flag[i] != 0;
     return k;
 }
 

@@ -110,6 +110,20 @@ void testDeterminism() {
     expect(same, "same seed + same first click give the identical board");
     expect(diff, "different seeds give different boards");
 
+    // Reference output of the PCG32 authors' demo program (pcg32_srandom_r(42, 54)).
+    Rng ref(42u, 54u);
+    const std::uint32_t expected[] = {0xa15c02b7u, 0x7b47f409u, 0xba1d3330u, 0x83d2f293u, 0xbfa4784bu, 0xcbed606eu};
+    bool ref_ok = true;
+    for (std::uint32_t e : expected) ref_ok = ref_ok && ref.nextU32() == e;
+    expect(ref_ok, "PCG32 reproduces the reference sequence for seed (42, 54)");
+    // below(n) is uniform: every value of a small range shows up about equally often.
+    Rng u(2024);
+    std::array<int, 7> hist{};
+    for (int i = 0; i < 70000; ++i) ++hist[u.below(7)];
+    bool uniform = true;
+    for (int c : hist) uniform = uniform && c > 9500 && c < 10500;
+    expect(uniform, "below(7) is uniform (70000 draws, each value within 5% of the mean)");
+
     Rng r1(42), r2(42);
     bool in_range = true;
     for (int i = 0; i < 1000; ++i) {
@@ -178,7 +192,7 @@ void testPureSquares() {
 void testCascade() {
     Game game;
     int mismatch = 0, mine_opened = 0, samples = 0, zero_cascaded = 0, zero_samples = 0;
-    for (std::uint32_t seed : {301u, 302u, 303u, 304u, 305u}) {
+    for (std::uint32_t seed : {301u, 302u, 303u, 304u, 305u, 306u, 307u, 308u, 309u, 310u}) {
         buildBoard(game, 12, 12, 24, kRandom, seed, 70);
         for (std::size_t i = 0; i < game.n && samples < 40; ++i) {
             if (game.mine[i] != 0 || game.open[i] != 0 || !game.isBlank(i)) continue;
@@ -350,7 +364,7 @@ void testFlagProtection() {
     std::size_t blank = 0, flagged_nbr = 0;
     bool found = false;
     for (std::size_t i = 0; i < game.n && !found; ++i) {
-        if (game.open[i] != 0 || game.mine[i] != 0 || !game.isBlank(i)) continue;
+        if (game.open[i] != 0 || game.mine[i] != 0 || game.flag[i] != 0 || !game.isBlank(i)) continue;
         for (std::uint16_t j : game.nbrs(i)) {
             if (game.open[j] == 0 && game.mine[j] == 0 && game.flag[j] == 0) {
                 blank = i;
@@ -374,26 +388,105 @@ void testFlagProtection() {
     std::printf("8 flags protect cells (cannot open, cascades leave them alone): done\n");
 }
 
+// Puts a flag on every mine with the true type (or with `type_of(true_type)`), without any checks.
+template <class F>
+void flagAllMines(Game& g, F type_of) {
+    for (std::size_t i = 0; i < g.n; ++i) {
+        if (g.mine[i] != 0) g.setFlag(i, static_cast<std::uint8_t>(type_of(g.mine[i])));
+    }
+}
+
 // ---- 9. Win / lose ----
+// The game is won when the flags sit exactly on the mines and the flags around every open
+// number add up to that number. Which of the equivalent labelings the flags use does not matter.
 void testWinLose() {
     Game game;
     buildBoard(game, 9, 9, 10, kRandom, 901, 40);
     for (std::size_t i = 0; i < game.n; ++i) {
         if (game.mine[i] == 0 && game.open[i] == 0) game.reveal(i);
     }
-    expect(game.win && game.over, "opening every safe cell wins");
-    expect(game.msg == Msg::win, "feedback on a win is win");
-    expect(game.openedCount() == game.safeCount(), "on a win the number of open cells equals the number of safe cells");
+    expect(!game.win && !game.over, "opening every safe cell is not enough: the mines must be flagged");
+    expect(game.openedCount() == game.safeCount(), "every safe cell is open");
+    flagAllMines(game, [](int t) { return t; });
+    game.checkWin();
+    expect(game.win && game.over && game.msg == Msg::win, "flags on every mine with the true types win");
 
+    // Flags placed one by one with cycleFlag: the last correct flag wins the game.
     buildBoard(game, 9, 9, 10, kRandom, 902, 40);
-    std::size_t left = 0;
-    while (!(game.mine[left] == 0 && game.open[left] == 0)) ++left;
+    std::vector<std::size_t> mines;
     for (std::size_t i = 0; i < game.n; ++i) {
-        if (i != left && game.mine[i] == 0 && game.open[i] == 0) game.reveal(i);
+        if (game.mine[i] != 0) mines.push_back(i);
     }
-    expect(!game.win, "no win while a safe cell is still closed");
+    bool early_win = false;
+    for (std::size_t k = 0; k < mines.size(); ++k) {
+        early_win = early_win || game.win;
+        // The last flag may already win with a type that differs from the true one (an
+        // equivalent labeling), so stop as soon as the game is over.
+        while (!game.over && game.flag[mines[k]] != game.mine[mines[k]]) game.cycleFlag(mines[k]);
+    }
+    expect(!early_win, "no win while a mine is still unflagged");
+    expect(game.win && game.over, "the last correct flag placed with cycleFlag wins the game");
 
+    // Any labeling that reproduces the numbers is fine: negate every mine (1 <-> 2, 3 <-> 4).
     buildBoard(game, 9, 9, 10, kRandom, 903, 40);
+    flagAllMines(game, [](int t) { return t == 1 ? 2 : (t == 2 ? 1 : (t == 3 ? 4 : 3)); });
+    game.checkWin();
+    expect(game.win, "a negated labeling reproduces every number and wins");
+    // ... and so does swapping the real and the imaginary axis in the complex mode.
+    buildBoard(game, 9, 9, 10, kRandom, 904, 40);
+    flagAllMines(game, [](int t) { return t == 1 ? 3 : (t == 3 ? 1 : (t == 2 ? 4 : 2)); });
+    game.checkWin();
+    expect(game.win, "swapping the axes reproduces every number in the complex mode");
+
+    // The swap is not a symmetry of the Minkowski mode (a^2 - b^2 changes sign).
+    Game h;
+    h.mode = Mode::hyper;
+    bool swap_rejected_somewhere = false;
+    for (std::uint32_t seed = 1; seed <= 20 && !swap_rejected_somewhere; ++seed) {
+        buildBoard(h, 9, 9, 10, kRandom, seed, 40);
+        flagAllMines(h, [](int t) { return t == 1 ? 3 : (t == 3 ? 1 : (t == 2 ? 4 : 2)); });
+        h.checkWin();
+        swap_rejected_somewhere = !h.win;
+    }
+    expect(swap_rejected_somewhere, "in the Minkowski mode swapping the axes breaks some numbers");
+    buildBoard(h, 9, 9, 10, kRandom, 905, 40);
+    flagAllMines(h, [](int t) { return t == 1 ? 2 : (t == 2 ? 1 : t); });
+    h.checkWin();
+    expect(h.win, "in the Minkowski mode negating the real parts is still a symmetry");
+
+    // Wrong positions never win.
+    buildBoard(game, 9, 9, 10, kRandom, 906, 40);
+    flagAllMines(game, [](int t) { return t; });
+    std::size_t a_mine = 0, a_safe = 0;
+    while (game.mine[a_mine] == 0) ++a_mine;
+    while (game.mine[a_safe] != 0 || game.open[a_safe] != 0) ++a_safe;
+    game.setFlag(a_safe, 1);
+    game.checkWin();
+    expect(!game.win, "a flag on a safe cell prevents the win");
+    game.setFlag(a_safe, 0);
+    game.setFlag(a_mine, 0);
+    game.checkWin();
+    expect(!game.win, "a missing flag prevents the win");
+    game.setFlag(a_mine, game.mine[a_mine]);
+
+    // Right positions but a labeling that contradicts a number do not win.
+    bool rejected = false;
+    for (std::size_t m = 0; m < game.n && !rejected; ++m) {
+        if (game.mine[m] == 0) continue;
+        const std::uint8_t keep = game.flag[m];
+        for (std::uint8_t t = 1; t <= 4 && !rejected; ++t) {
+            if (t == keep) continue;
+            game.setFlag(m, t);
+            rejected = !game.flagsSolve();
+            if (!rejected) game.setFlag(m, keep);
+        }
+        if (!rejected) game.setFlag(m, keep);
+    }
+    game.checkWin();
+    expect(rejected && !game.win, "right positions with types that contradict a number do not win");
+
+    // Stepping on a mine loses.
+    buildBoard(game, 9, 9, 10, kRandom, 907, 40);
     std::size_t m = 0;
     while (game.mine[m] == 0) ++m;
     game.reveal(m);
