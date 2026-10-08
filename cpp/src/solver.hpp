@@ -19,8 +19,8 @@
 //
 // Order of the moves. When several moves are certain, flags come first; after every opening the
 // solver looks again for certain flags before it opens the next cell. Among moves of the same kind
-// it takes the one closest to its previous move (to the center of the board at the start and after a
-// clear step).
+// it takes the one with the most neighbors that are already open or flagged, and then the one closest
+// to its previous move (to the center of the board at the start and after a clear step).
 //
 // Flags of the player. Flags the player placed are taken over as if the solver had placed them
 // (they are not placed again, and they count against the number of mines left); a wrong type is
@@ -109,7 +109,7 @@ private:
     double last_r_ = 0.0;
     double last_c_ = 0.0;
     // Removes and returns the next move from the queue: flags before openings, then the closest
-    // one to the last move (ties: the lowest cell).
+    // with the most open or flagged neighbors, then the closest one to the last move (ties: the lowest cell).
     Move takeNext(const Game& g);
     int orientation_ = 0;
 };

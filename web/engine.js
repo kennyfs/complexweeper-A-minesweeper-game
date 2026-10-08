@@ -830,21 +830,24 @@
       return true;
     }
 
-    // Removes and returns the next move: flags before openings, then the closest one to the last
-    // move (ties: the lowest cell).
+    // Removes and returns the next move: flags before openings, then the one with the most open or
+    // flagged neighbors, then the closest one to the last move (ties: the lowest cell).
     takeNext(g) {
-      let best = 0, bestDist = 0;
+      let best = 0, bestDist = 0, bestFilled = 0;
       for (let k = 0; k < this.queue.length; k++) {
         const m = this.queue[k];
         const dr = Math.floor(m.cell / g.w) - this.lastR, dc = (m.cell % g.w) - this.lastC;
         const dist = dr * dr + dc * dc;
         const b = this.queue[best];
+        let filled = 0;  // neighbors that are open or flagged
+        for (const n of g.nbrs(m.cell)) filled += g.open[n] !== 0 || g.flag[n] !== 0 ? 1 : 0;
         let better = true;
         if (k > 0) {
           if ((m.kind === KIND_FLAG) !== (b.kind === KIND_FLAG)) better = m.kind === KIND_FLAG;
+          else if (filled !== bestFilled) better = filled > bestFilled;
           else better = dist < bestDist || (dist === bestDist && m.cell < b.cell);
         }
-        if (better) { best = k; bestDist = dist; }
+        if (better) { best = k; bestDist = dist; bestFilled = filled; }
       }
       return this.queue.splice(best, 1)[0];
     }

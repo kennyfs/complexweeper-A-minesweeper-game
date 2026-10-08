@@ -659,16 +659,21 @@ bool Solver::analyze(const Game& g) {
 Move Solver::takeNext(const Game& g) {
     std::size_t best = 0;
     double best_dist = 0.0;
+    std::size_t best_filled = 0;
     for (std::size_t k = 0; k < queue_.size(); ++k) {
         const Move& m = queue_[k];
         const double dr = static_cast<double>(m.cell / g.w) - last_r_;
         const double dc = static_cast<double>(m.cell % g.w) - last_c_;
         const double dist = dr * dr + dc * dc;
         const Move& b = queue_[best];
+        std::size_t filled = 0;  // neighbors that are open or flagged
+        for (std::uint16_t j : g.nbrs(m.cell)) filled += g.open[j] != 0 || g.flag[j] != 0;
         bool better = true;
         if (k > 0) {
             if ((m.kind == MoveKind::mark) != (b.kind == MoveKind::mark)) {
                 better = m.kind == MoveKind::mark;
+            } else if (filled != best_filled) {
+                better = filled > best_filled;
             } else {
                 better = dist < best_dist || (dist == best_dist && m.cell < b.cell);
             }
@@ -676,6 +681,7 @@ Move Solver::takeNext(const Game& g) {
         if (better) {
             best = k;
             best_dist = dist;
+            best_filled = filled;
         }
     }
     Move m = queue_[best];
