@@ -6,15 +6,13 @@ without opening a window.
 import json
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 # The asset directory and file names are the repository's existing paths.
 ATLAS_DIR = ROOT / "素材"
 ATLAS_PNG = ATLAS_DIR / "图集.png"
 ATLAS_JSON = ATLAS_DIR / "图集.json"
-
-SOLVER_FLAG = "solver_flag"  # synthetic sprite: "a mine, type unknown" marked by the solver
 
 
 class Atlas:
@@ -28,12 +26,12 @@ class Atlas:
         self._cache = {}
 
     def has(self, name):
-        return name in self.slots or name == SOLVER_FLAG
+        return name in self.slots
 
     def sprite(self, name):
         """The sprite at its native size, as an RGBA image."""
         if name not in self._cache:
-            self._cache[name] = self._make_solver_flag() if name == SOLVER_FLAG else self._crop(name)
+            self._cache[name] = self._crop(name)
         return self._cache[name]
 
     def scaled(self, name, zoom):
@@ -44,16 +42,6 @@ class Atlas:
     def _crop(self, name):
         x, y, w, h = self.slots[name]
         return self.image.crop((x, y, x + w, y + h))
-
-    def _make_solver_flag(self):
-        # A closed cell with an orange flag: the solver knows the cell is a mine, but the numbers
-        # can never tell which of the four types it is.
-        img = self._crop("closed").copy()
-        d = ImageDraw.Draw(img)
-        d.polygon([(4, 3), (11, 6), (4, 9)], fill=(255, 150, 0, 255))
-        d.line([(4, 3), (4, 12)], fill=(0, 0, 0, 255))
-        d.rectangle([(2, 12), (9, 13)], fill=(0, 0, 0, 255))
-        return img
 
 
 def _typed(prefix, kind, hyper):
@@ -85,20 +73,15 @@ def cell_sprite(cell, index, hyper, over, boom, atlas):
             return "blank" if cell.blank else number_name(cell.clue, hyper, atlas)
         if cell.flag:
             return _typed("flag", cell.flag, hyper)
-        if cell.mark:
-            return SOLVER_FLAG
         return "closed"
 
-    # The game is over: show where the mines were and which flags were right or wrong.
+    # The game is over: show where the mines were. The rules judge flags by position and by whether
+    # they reproduce the numbers, not by their exact type, so a flag on a mine is simply "right".
     if cell.mine:
         if index == boom:
             return _typed("boom", cell.mine, hyper)
-        if cell.flag == cell.mine:
-            return _typed("rightflag", cell.mine, hyper)
         if cell.flag:
-            return _typed("wrongflag", cell.flag, hyper)
-        if cell.mark:
-            return SOLVER_FLAG
+            return _typed("rightflag", cell.flag, hyper)
         return _typed("mine", cell.mine, hyper)
     if cell.open:
         return "blank" if cell.blank else number_name(cell.clue, hyper, atlas)

@@ -17,17 +17,13 @@ LIB_NAME = "libcomplexweeper_capi.so" if sys.platform != "darwin" else "libcompl
 # Game states returned by Engine.state
 READY, PLAYING, WON, LOST = 0, 1, 2, 3
 # Solver move kinds and reasons (see capi.h)
-KIND_NONE, KIND_OPEN, KIND_MARK = 0, 1, 2
+KIND_NONE, KIND_OPEN, KIND_FLAG, KIND_RETYPE = 0, 1, 2, 3
 REASON_FIRST_CLICK, REASON_CERTAIN, REASON_GUESS = 0, 1, 2
 # Modes
 MODE_COMPLEX, MODE_HYPER = 0, 1
 
-# Standard difficulties: name -> (width, height, mines)
-LEVELS = {
-    "Beginner": (9, 9, 10),
-    "Intermediate": (16, 16, 40),
-    "Expert": (30, 16, 99),
-}
+# Difficulty names, in the order of the library's presets (the mine counts differ per mode).
+LEVEL_NAMES = ("Beginner", "Intermediate", "Expert")
 
 
 class Cell(ctypes.Structure):
@@ -36,9 +32,8 @@ class Cell(ctypes.Structure):
         ("open", ctypes.c_uint8),
         ("flag", ctypes.c_uint8),
         ("mine", ctypes.c_uint8),
-        ("mark", ctypes.c_uint8),
         ("blank", ctypes.c_uint8),
-        ("reserved", ctypes.c_uint8),
+        ("reserved", ctypes.c_uint8 * 2),
     ]
 
 
@@ -47,6 +42,8 @@ class Move(ctypes.Structure):
         ("kind", ctypes.c_int32),
         ("cell", ctypes.c_int32),
         ("reason", ctypes.c_int32),
+        ("type", ctypes.c_int32),
+        ("retyped", ctypes.c_int32),
         ("risk", ctypes.c_float),
     ]
 
@@ -81,6 +78,8 @@ def _load():
         "cw_destroy": (None, [c_vp]),
         "cw_new_game": (None, [c_vp, c_int, c_int, c_int, c_int, c_u32]),
         "cw_set_judge_loose": (None, [c_vp, c_int]),
+        "cw_set_solver_orientation": (None, [c_vp, c_int]),
+        "cw_preset": (c_int, [c_int, c_int, ctypes.POINTER(c_int), ctypes.POINTER(c_int), ctypes.POINTER(c_int)]),
         "cw_width": (c_int, [c_vp]),
         "cw_height": (c_int, [c_vp]),
         "cw_mines": (c_int, [c_vp]),
@@ -111,7 +110,7 @@ class Engine:
         self._s = self._lib.cw_create()
         if not self._s:
             raise MemoryError("cw_create failed")
-        self.new_game(*LEVELS["Beginner"], MODE_COMPLEX, 1)
+        self.new_game(*self.preset(MODE_COMPLEX, "Beginner"), MODE_COMPLEX, 1)
 
     def close(self):
         if self._s:
@@ -121,8 +120,19 @@ class Engine:
     __del__ = close
 
     # ---- game setup and queries ----
+    def preset(self, mode, level):
+        """(width, height, mines) of a difficulty level ("Beginner", ...) in the given mode."""
+        w, h, m = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
+        if not self._lib.cw_preset(mode, LEVEL_NAMES.index(level), ctypes.byref(w), ctypes.byref(h), ctypes.byref(m)):
+            raise ValueError("no such preset")
+        return w.value, h.value, m.value
+
     def new_game(self, width, height, mines, mode, seed):
         self._lib.cw_new_game(self._s, width, height, mines, mode, seed & 0xFFFFFFFF)
+
+    def set_solver_orientation(self, orientation):
+        """Which of the equivalent flag labelings the solver produces (0..7, 0 is canonical)."""
+        self._lib.cw_set_solver_orientation(self._s, orientation)
 
     width = property(lambda self: self._lib.cw_width(self._s))
     height = property(lambda self: self._lib.cw_height(self._s))
@@ -130,7 +140,7 @@ class Engine:
     mode = property(lambda self: self._lib.cw_mode(self._s))
     state = property(lambda self: self._lib.cw_state(self._s))
     boom_cell = property(lambda self: self._lib.cw_boom_cell(self._s))
-    marked = property(lambda self: self._lib.cw_marked_count(self._s))
+    flags = property(lambda self: self._lib.cw_marked_count(self._s))
     undo_depth = property(lambda self: self._lib.cw_undo_depth(self._s))
 
     def cells(self):
@@ -152,7 +162,8 @@ class Engine:
 
     # ---- solver and undo ----
     def solver_step(self, now_ms=0):
-        """Perform one solver step. Returns a Move, or None if there is nothing to do."""
+        """Perform one solver step. Returns a Move (with .kind, .cell, .reason, .type, .retyped, .risk),
+        or None if there is nothing to do."""
         mv = Move()
         if self._lib.cw_solver_step(self._s, now_ms & 0xFFFFFFFF, ctypes.byref(mv)):
             return mv

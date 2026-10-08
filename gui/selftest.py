@@ -43,12 +43,12 @@ def test_sprite_coverage(atlas):
         names = [number_name(v, hyper, atlas) for v in values]
         expect(all(atlas.has(n) for n in names), "every displayed value has a sprite (hyper=%s)" % hyper)
         expect(len(set(names)) == len(names), "no two displayed values share a sprite (hyper=%s)" % hyper)
-    for name in ["closed", "blank", "face_normal", "face_dead", "face_win", "face_scan", "led_minus", "solver_flag"] + \
+    for name in ["closed", "blank", "face_normal", "face_dead", "face_win", "face_scan", "led_minus"] + \
             ["led_%d" % d for d in range(10)]:
         expect(atlas.has(name), "sprite exists: " + name)
     for hyper in (False, True):
         for t in range(1, 5):
-            for prefix in ("flag", "mine", "boom", "wrong", "rightflag", "wrongflag"):
+            for prefix in ("flag", "mine", "boom", "wrong", "rightflag"):
                 name = ("h" if hyper and t >= 3 else "") + "%s_%d" % (prefix, t)
                 expect(atlas.has(name), "sprite exists: " + name)
     print("sprite coverage: done")
@@ -92,7 +92,7 @@ def play(eng, atlas, snapshots, label):
         pass
     cells = eng.cells()
     expect(eng.state == E.READY and eng.undo_depth == 0, "%s: undo restores the starting state" % label)
-    expect(not any(c.open or c.flag or c.mark for c in cells), "%s: no open / flagged / marked cell remains" % label)
+    expect(not any(c.open or c.flag for c in cells), "%s: no open or flagged cell remains" % label)
     return n
 
 
@@ -100,8 +100,10 @@ def test_games(atlas, snapshots):
     eng = E.Engine()
     rng = random.Random(7)
     for mode, mode_name in ((E.MODE_COMPLEX, "complex"), (E.MODE_HYPER, "mink")):
-        for level, (w, h, mines) in E.LEVELS.items():
+        for level in E.LEVEL_NAMES:
+            w, h, mines = eng.preset(mode, level)
             for k in range(3):
+                eng.set_solver_orientation(rng.randrange(8))
                 eng.new_game(w, h, mines, mode, rng.randrange(1, 10 ** 6))
                 expect((eng.width, eng.height, eng.mines, eng.mode) == (w, h, mines, mode), "new_game applies its parameters")
                 play(eng, atlas, snapshots if k == 0 else None, "%s_%s" % (mode_name, level.lower()))

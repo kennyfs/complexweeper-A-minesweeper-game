@@ -3,9 +3,15 @@
 
 Run from the repository root:   python3 gui/app.py
 
+Rules in short: the numbers are the displayed value of the sum of the mine vectors around a cell
+(+1, -1, +i, -i; in the Minkowski mode +j, -j with j*j = +1). You win when the flags sit exactly on
+the mines and the flags around every open number add up to that number.
+
 Mouse:    left click = open, right click = cycle flag (none, +1, -1, +i/+j, -i/-j),
           middle click or Shift+left click = chord (open the neighbors of a number).
 Keyboard: Right = solver step, Left = undo, Space = auto play, F2 = new game.
+
+The window never changes size: the board area, the header and the status area have fixed sizes.
 """
 import argparse
 import base64
@@ -14,22 +20,27 @@ import random
 import sys
 import time
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import ttk
 
 import engine as eng_mod
-from engine import Engine, LEVELS, MODE_COMPLEX, MODE_HYPER
+from engine import Engine, LEVEL_NAMES, MODE_COMPLEX, MODE_HYPER
 from sprites import Atlas, cell_sprite
 
 MODE_NAMES = {
     MODE_COMPLEX: "Circular complex (i² = −1)",
     MODE_HYPER: "Minkowski (j² = +1)",
 }
+# Fixed size of the board area, in pixels. The biggest board (30x16) fits at zoom 2.
+AREA_W, AREA_H = 960, 512
+HEADER_H = 62
+FIXED_ZOOM = 2  # LED displays and the face have a constant size
+STATUS_LINES = 3
 # Highlight colors for the cell the solver just acted on.
 COLOR_FIRST = "#3aa0ff"
 COLOR_OPEN = "#00b000"
-COLOR_MARK = "#ff4500"
+COLOR_FLAG = "#ff4500"
 COLOR_GUESS = "#ffcc00"
-
 
 try:
     from PIL import ImageTk
@@ -44,6 +55,16 @@ def to_photo(img):
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return tk.PhotoImage(data=base64.b64encode(buf.getvalue()))
+
+
+def fit_zoom(width, height):
+    """The biggest zoom at which a board of this size fits in the board area."""
+    return max(1, min(AREA_W // (16 * width), AREA_H // (16 * height)))
+
+
+def type_name(flag_type, mode):
+    unit = "j" if mode == MODE_HYPER else "i"
+    return {1: "+1", 2: "-1", 3: "+" + unit, 4: "-" + unit}[flag_type]
 
 
 class Led:
@@ -63,7 +84,7 @@ class Led:
             return
         self.text = text
         for lab, ch in zip(self.labels, text):
-            photo = self.app.photo("led_minus" if ch == "-" else "led_" + ch)
+            photo = self.app.photo("led_minus" if ch == "-" else "led_" + ch, FIXED_ZOOM)
             lab.configure(image=photo)
             lab.image = photo
 
@@ -79,22 +100,26 @@ class App:
         self.zoom = 2
         self.items = []
         self.shown = []
+        self.origin = (0, 0)  # top-left corner of the board inside the board area
         self.highlight = None  # (cell, color) of the solver's latest step
         self.auto = False
         self.auto_job = None
         self.t_start = None
         self.elapsed = 0
         self.prev_state = eng_mod.READY
+        self.hinted = False
 
         self.mode_var = tk.StringVar(value=MODE_NAMES[MODE_COMPLEX])
         self.level_var = tk.StringVar(value="Beginner")
         self.seed_var = tk.StringVar()
         self.zoom_var = tk.StringVar(value=str(self.zoom))
         self.delay_var = tk.IntVar(value=400)
+        self.orient_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar()
         self._build_widgets()
         self._bind_keys()
         self.new_game()
+        self._freeze_window_size()
         self._tick()
 
     # ------------------------------------------------------------------ widgets
@@ -104,30 +129,29 @@ class App:
         ttk.Label(top, text="Mode").pack(side="left")
         mode_box = ttk.Combobox(top, textvariable=self.mode_var, values=list(MODE_NAMES.values()),
                                 state="readonly", width=24)
-        mode_box.pack(side="left", padx=(4, 10))
+        mode_box.pack(side="left", padx=(4, 12))
         ttk.Label(top, text="Level").pack(side="left")
-        level_box = ttk.Combobox(top, textvariable=self.level_var, values=list(LEVELS), state="readonly", width=13)
-        level_box.pack(side="left", padx=(4, 10))
+        level_box = ttk.Combobox(top, textvariable=self.level_var, values=list(LEVEL_NAMES), state="readonly", width=13)
+        level_box.pack(side="left", padx=(4, 12))
         for box in (mode_box, level_box):
             box.bind("<<ComboboxSelected>>", lambda _e: self.new_game())
         ttk.Label(top, text="Seed").pack(side="left")
-        ttk.Entry(top, textvariable=self.seed_var, width=11).pack(side="left", padx=(4, 6))
-        ttk.Button(top, text="New game", command=self.new_game).pack(side="left", padx=(0, 10))
-        ttk.Label(top, text="Zoom").pack(side="left")
-        ttk.Spinbox(top, from_=1, to=3, width=3, textvariable=self.zoom_var, state="readonly",
-                    command=self.on_zoom).pack(side="left", padx=4)
+        ttk.Entry(top, textvariable=self.seed_var, width=11).pack(side="left", padx=(4, 8))
+        ttk.Button(top, text="New game", command=self.new_game).pack(side="left")
 
-        self.header = tk.Frame(self.root, bd=2, relief="groove", padx=6, pady=4)
-        self.header.grid(row=1, column=0, sticky="ew", padx=8)
+        self.header = tk.Frame(self.root, width=AREA_W, height=HEADER_H, bd=2, relief="groove")
+        self.header.grid(row=1, column=0, padx=8)
+        self.header.grid_propagate(False)
+        self.header.pack_propagate(False)
         self.mine_led = Led(self.header, self)
-        self.mine_led.frame.pack(side="left")
+        self.mine_led.frame.place(x=6, rely=0.5, anchor="w")
         self.time_led = Led(self.header, self)
-        self.time_led.frame.pack(side="right")
+        self.time_led.frame.place(relx=1.0, x=-6, rely=0.5, anchor="e")
         self.face = tk.Label(self.header, bd=0)
-        self.face.pack()
+        self.face.place(relx=0.5, rely=0.5, anchor="center")
         self.face.bind("<Button-1>", lambda _e: self.new_game())
 
-        self.canvas = tk.Canvas(self.root, highlightthickness=0, bd=0)
+        self.canvas = tk.Canvas(self.root, width=AREA_W, height=AREA_H, highlightthickness=0, bd=0, bg="#9a9a9a")
         self.canvas.grid(row=2, column=0, padx=8, pady=(4, 4))
         self.canvas.bind("<ButtonRelease-1>", self.on_left)
         self.canvas.bind("<Button-3>", self.on_right)
@@ -139,16 +163,35 @@ class App:
         self.undo_btn.pack(side="left")
         self.step_btn = ttk.Button(bar, text="Step ▶", command=self.step)
         self.step_btn.pack(side="left", padx=6)
-        self.auto_btn = ttk.Button(bar, text="Auto play", command=self.toggle_auto)
+        self.auto_btn = ttk.Button(bar, text="Auto play", width=9, command=self.toggle_auto)
         self.auto_btn.pack(side="left")
-        ttk.Label(bar, text="Delay (ms)").pack(side="left", padx=(14, 4))
-        ttk.Scale(bar, from_=30, to=1500, variable=self.delay_var, orient="horizontal", length=140,
+        ttk.Label(bar, text="Delay (ms)").pack(side="left", padx=(12, 4))
+        ttk.Scale(bar, from_=30, to=1500, variable=self.delay_var, orient="horizontal", length=120,
                   command=lambda v: self.delay_var.set(int(float(v)))).pack(side="left")
-        self.delay_label = ttk.Label(bar, textvariable=self.delay_var, width=5)
-        self.delay_label.pack(side="left")
+        ttk.Label(bar, textvariable=self.delay_var, width=5).pack(side="left")
+        ttk.Label(bar, text="Zoom").pack(side="left", padx=(8, 4))
+        self.zoom_box = ttk.Spinbox(bar, from_=1, to=3, width=3, textvariable=self.zoom_var, state="readonly",
+                                    command=self.on_zoom)
+        self.zoom_box.pack(side="left")
+        ttk.Checkbutton(bar, text="Random flag orientation", variable=self.orient_var,
+                        command=self.new_game).pack(side="left", padx=(14, 0))
 
-        self.status = ttk.Label(self.root, textvariable=self.status_var, justify="left", padding=(10, 2, 10, 8))
-        self.status.grid(row=4, column=0, sticky="w")
+        # The status area has a fixed size: long messages wrap, they never resize the window.
+        line = tkfont.nametofont("TkDefaultFont").metrics("linespace")
+        self.status_frame = tk.Frame(self.root, width=AREA_W, height=line * STATUS_LINES + 10)
+        self.status_frame.grid(row=4, column=0, padx=8, pady=(0, 6))
+        self.status_frame.grid_propagate(False)
+        self.status_frame.pack_propagate(False)
+        tk.Label(self.status_frame, textvariable=self.status_var, justify="left", anchor="nw",
+                 wraplength=AREA_W - 16).pack(fill="both", expand=True, padx=4, pady=2)
+
+    def _freeze_window_size(self):
+        """Pin the window to the size it has now. Nothing in the UI changes size afterwards."""
+        self.root.update_idletasks()
+        w, h = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
+        self.root.geometry("%dx%d" % (w, h))
+        self.root.minsize(w, h)
+        self.root.maxsize(w, h)
 
     def _bind_keys(self):
         def guard(fn):
@@ -164,54 +207,67 @@ class App:
         self.root.bind("<F2>", lambda _e: self.new_game())
 
     # ------------------------------------------------------------------ sprites
-    def photo(self, name):
-        key = (name, self.zoom)
+    def photo(self, name, zoom=None):
+        zoom = zoom or self.zoom
+        key = (name, zoom)
         if key not in self.photos:
-            self.photos[key] = to_photo(self.atlas.scaled(name, self.zoom))
+            self.photos[key] = to_photo(self.atlas.scaled(name, zoom))
         return self.photos[key]
 
     # ------------------------------------------------------------------ game flow
     def now_ms(self):
         return int(time.monotonic() * 1000)
 
+    def current_mode(self):
+        return MODE_HYPER if self.mode_var.get() == MODE_NAMES[MODE_HYPER] else MODE_COMPLEX
+
     def new_game(self):
         self.stop_auto()
-        mode = MODE_HYPER if self.mode_var.get() == MODE_NAMES[MODE_HYPER] else MODE_COMPLEX
-        w, h, mines = LEVELS[self.level_var.get()]
+        mode = self.current_mode()
+        w, h, mines = self.eng.preset(mode, self.level_var.get())
         try:
             seed = int(self.seed_var.get())
         except ValueError:
             seed = random.randrange(1, 2 ** 31)
         self.seed_var.set(str(seed))
+        # The orientation follows from the seed, so replaying a seed looks the same.
+        orientation = random.Random(seed).randrange(8) if self.orient_var.get() else 0
+        self.eng.set_solver_orientation(orientation)
         self.eng.new_game(w, h, mines, mode, seed)
+        self.zoom = fit_zoom(w, h)
+        self.zoom_var.set(str(self.zoom))
+        self.zoom_box.configure(to=self.zoom)
         self.t_start = None
         self.elapsed = 0
         self.prev_state = eng_mod.READY
+        self.hinted = False
         self.highlight = None
         self.build_board()
-        self.say("New game. Click a cell to start, or press Step and let the solver play.")
+        self.say("New game: %d mines on a %dx%d board. Click a cell, or press Step and let the solver play." %
+                 (mines, w, h))
         self.refresh()
 
     def build_board(self):
         w, h = self.eng.width, self.eng.height
         cs = 16 * self.zoom
+        self.origin = ((AREA_W - w * cs) // 2, (AREA_H - h * cs) // 2)
+        ox, oy = self.origin
         self.canvas.delete("all")
-        self.canvas.configure(width=w * cs, height=h * cs)
         closed = self.photo("closed")
-        self.items = [self.canvas.create_image((i % w) * cs, (i // w) * cs, anchor="nw", image=closed)
+        self.items = [self.canvas.create_image(ox + (i % w) * cs, oy + (i // w) * cs, anchor="nw", image=closed)
                       for i in range(w * h)]
         self.shown = ["closed"] * (w * h)
 
     def on_zoom(self):
         self.zoom = int(self.zoom_var.get())
         self.photos.clear()
-        self.build_board()
         self.mine_led.text = self.time_led.text = None
+        self.build_board()
         self.refresh()
 
     def cell_at(self, event):
         cs = 16 * self.zoom
-        col, row = event.x // cs, event.y // cs
+        col, row = (event.x - self.origin[0]) // cs, (event.y - self.origin[1]) // cs
         if 0 <= col < self.eng.width and 0 <= row < self.eng.height:
             return row * self.eng.width + col
         return None
@@ -248,16 +304,18 @@ class App:
     # ------------------------------------------------------------------ solver
     def describe(self, mv):
         w = self.eng.width
-        where = "row %d, column %d" % (mv.cell // w + 1, mv.cell % w + 1)
+        where = "(%d, %d)" % (mv.cell // w + 1, mv.cell % w + 1)
+        step = "Step %d: " % self.eng.undo_depth
+        reoriented = " Re-oriented %d flag%s." % (mv.retyped, "" if mv.retyped == 1 else "s") if mv.retyped else ""
+        if mv.kind == eng_mod.KIND_RETYPE:
+            return step + "re-oriented %d flags so that every number agrees." % mv.retyped
         if mv.reason == eng_mod.REASON_FIRST_CLICK:
-            return "First click at %s, the middle of the board. The opening cell and its neighbors are always safe." % where
+            return step + "first click in the middle %s. It and its neighbors are always safe." % where
         if mv.reason == eng_mod.REASON_GUESS:
-            return ("No certain move is left, so guess: open %s. Estimated mine probability: %.0f%%."
-                    % (where, mv.risk * 100))
+            return step + "guess %s, %.0f%% chance of a mine. Nothing is certain.%s" % (where, mv.risk * 100, reoriented)
         if mv.kind == eng_mod.KIND_OPEN:
-            return "Open %s: logically certain to be safe." % where
-        return ("Mark %s as a mine: logically certain. (The numbers never reveal which of the four "
-                "types it is, so this flag has no type.)" % where)
+            return step + "open %s, certainly safe.%s" % (where, reoriented)
+        return step + "flag %s as %s, certainly a mine.%s" % (where, type_name(mv.type, self.eng.mode), reoriented)
 
     def step(self):
         if self.over():
@@ -267,14 +325,17 @@ class App:
             self.stop_auto()
             self.say("The solver has no further move.")
             return False
-        if mv.reason == eng_mod.REASON_FIRST_CLICK:
-            color = COLOR_FIRST
-        elif mv.reason == eng_mod.REASON_GUESS:
-            color = COLOR_GUESS
+        if mv.kind == eng_mod.KIND_RETYPE:
+            self.highlight = None
         else:
-            color = COLOR_OPEN if mv.kind == eng_mod.KIND_OPEN else COLOR_MARK
-        self.highlight = (mv.cell, color)
-        self.say("Step %d: %s" % (self.eng.undo_depth, self.describe(mv)))
+            if mv.reason == eng_mod.REASON_FIRST_CLICK:
+                color = COLOR_FIRST
+            elif mv.reason == eng_mod.REASON_GUESS:
+                color = COLOR_GUESS
+            else:
+                color = COLOR_OPEN if mv.kind == eng_mod.KIND_OPEN else COLOR_FLAG
+            self.highlight = (mv.cell, color)
+        self.say(self.describe(mv))
         self.refresh()
         return True
 
@@ -282,6 +343,7 @@ class App:
         if self.eng.undo():
             self.stop_auto()
             self.highlight = None
+            self.hinted = False
             self.say("Undid one step (%d left to undo)." % self.eng.undo_depth)
             self.refresh()
 
@@ -321,7 +383,9 @@ class App:
         over = state in (eng_mod.WON, eng_mod.LOST)
         hyper = e.mode == MODE_HYPER
         boom = e.boom_cell
+        closed = 0
         for i, c in enumerate(e.cells()):
+            closed += not c.open
             name = cell_sprite(c, i, hyper, over, boom, self.atlas)
             if name != self.shown[i]:
                 self.canvas.itemconfigure(self.items[i], image=self.photo(name))
@@ -331,7 +395,8 @@ class App:
         if self.highlight is not None:
             cell, color = self.highlight
             cs = 16 * self.zoom
-            x, y = (cell % e.width) * cs, (cell // e.width) * cs
+            x = self.origin[0] + (cell % e.width) * cs
+            y = self.origin[1] + (cell // e.width) * cs
             self.canvas.create_rectangle(x + 1, y + 1, x + cs - 2, y + cs - 2, outline=color, width=3,
                                          tags="highlight")
 
@@ -340,7 +405,7 @@ class App:
             self.t_start, self.elapsed = None, 0
         elif state == eng_mod.PLAYING and self.t_start is None:
             self.t_start = time.monotonic() - self.elapsed
-        self.mine_led.set(0 if state == eng_mod.WON else e.mines - e.marked)
+        self.mine_led.set(e.mines - e.flags)
         self.time_led.set(self.elapsed)
 
         if state == eng_mod.LOST:
@@ -349,15 +414,18 @@ class App:
             face = "face_win"
         else:
             face = "face_scan" if self.auto else "face_normal"
-        self.face.configure(image=self.photo(face))
-        self.face.image = self.photo(face)
+        self.face.configure(image=self.photo(face, FIXED_ZOOM))
+        self.face.image = self.photo(face, FIXED_ZOOM)
 
         if state != self.prev_state:
             if state == eng_mod.WON:
-                self.say("All safe cells are open. You win!")
+                self.say("Every mine is flagged and every number agrees. You win!")
             elif state == eng_mod.LOST:
-                self.say(self.status_var.get() + "  Boom, the game is lost." if self.highlight else "Boom, the game is lost.")
+                self.say((self.status_var.get() + " " if self.highlight else "") + "Boom, that was a mine. The game is lost.")
             self.prev_state = state
+        elif state == eng_mod.PLAYING and closed == e.mines and not self.hinted and not self.auto:
+            self.hinted = True
+            self.say("Only mines are left closed. Flag them all (right click) to win.")
 
         self.undo_btn.state(["!disabled"] if e.undo_depth > 0 else ["disabled"])
         self.step_btn.state(["disabled"] if over else ["!disabled"])
@@ -381,6 +449,13 @@ def smoke_test(app):
     def run():
         root, e = app.root, app.eng
         root.update()
+        size = (root.winfo_width(), root.winfo_height())
+        sizes = {size}
+
+        def settle():
+            root.update()
+            sizes.add((root.winfo_width(), root.winfo_height()))
+
         # Manual play
         app.mode_var.set(MODE_NAMES[MODE_COMPLEX])
         app.level_var.set("Beginner")
@@ -394,49 +469,70 @@ def smoke_test(app):
         # The same actions through real mouse events
         app.new_game()
         cs = 16 * app.zoom
-        cx, cy = 4 * cs + cs // 2, 4 * cs + cs // 2  # the middle cell of a 9x9 board
+        ox, oy = app.origin
+        cx, cy = ox + 4 * cs + cs // 2, oy + 4 * cs + cs // 2  # the middle cell of a 9x9 board
         app.canvas.event_generate("<ButtonRelease-1>", x=cx, y=cy)
-        root.update()
+        settle()
         check(e.state == eng_mod.PLAYING, "left click event starts the game")
         closed = next(i for i, c in enumerate(e.cells()) if not c.open)
-        fx, fy = (closed % e.width) * cs + cs // 2, (closed // e.width) * cs + cs // 2
+        fx, fy = ox + (closed % e.width) * cs + cs // 2, oy + (closed // e.width) * cs + cs // 2
         app.canvas.event_generate("<Button-3>", x=fx, y=fy)
-        root.update()
+        settle()
         check(e.cells()[closed].flag == 1 and app.shown[closed] == "flag_1", "right click event places a flag and shows it")
         app.canvas.event_generate("<Button-2>", x=cx, y=cy)
         app.canvas.event_generate("<ButtonRelease-1>", x=cx, y=cy, state=0x1)
-        root.update()
+        settle()
         check(e.state in (eng_mod.PLAYING, eng_mod.LOST), "middle click and shift+click chord events are handled")
         # Solver stepping with undo
         app.new_game()
         for _ in range(8):
             app.step()
+            settle()
         depth = e.undo_depth
         check(depth == 8, "eight solver steps leave eight history entries")
         for _ in range(3):
             app.undo()
         check(e.undo_depth == depth - 3, "three undos remove three entries")
-        # Auto play to the end, on both modes
+        # Auto play to the end
         app.delay_var.set(1)
         app.toggle_auto()
         for _ in range(4000):
-            root.update()
+            settle()
             if not app.auto:
                 break
             time.sleep(0.002)
         check(e.state in (eng_mod.WON, eng_mod.LOST), "auto play runs the game to its end")
-        app.mode_var.set(MODE_NAMES[MODE_HYPER])
+        # Every level in both modes, with the random flag orientation on and off
+        for mode in (MODE_COMPLEX, MODE_HYPER):
+            for level in LEVEL_NAMES:
+                for orient in (False, True):
+                    app.mode_var.set(MODE_NAMES[mode])
+                    app.level_var.set(level)
+                    app.orient_var.set(orient)
+                    app.seed_var.set("777")
+                    app.new_game()
+                    want = e.preset(mode, level)
+                    check((e.width, e.height, e.mines, e.mode) == (*want, mode), "%s %s starts the right game" % (level, mode))
+                    for _ in range(40):
+                        if not app.step():
+                            break
+                    settle()
+        check(any(c.flag for c in e.cells()) or e.state != eng_mod.PLAYING, "the solver places typed flags")
+        # Zoom changes keep the game and the board inside the fixed area
+        app.mode_var.set(MODE_NAMES[MODE_COMPLEX])
         app.level_var.set("Intermediate")
+        app.orient_var.set(False)
         app.new_game()
-        check(e.mode == MODE_HYPER and (e.width, e.height) == (16, 16), "mode and level selection start the right game")
-        app.zoom_var.set("1")
-        app.on_zoom()
-        app.zoom_var.set("3")
-        app.on_zoom()
         app.step()
         app.step()
-        root.update()
-        check(app.zoom == 3 and e.undo_depth == 2, "zoom change keeps the game")
+        for z in ("1", "2"):
+            app.zoom_var.set(z)
+            app.on_zoom()
+            settle()
+        check(app.zoom == 2 and e.undo_depth == 2, "zoom change keeps the game")
+        app.status_var.set("A very long status message that must wrap instead of widening the window. " * 8)
+        settle()
+        check(len(sizes) == 1, "the window size never changed (%s)" % sorted(sizes))
         root.destroy()
 
     app.root.after(100, run)
