@@ -15,8 +15,8 @@
   // The four mine types as (real, imaginary).
   const TYPES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   const PRESETS = [
-    [[9, 9, 7], [16, 16, 24], [30, 16, 47]],
-    [[9, 9, 8], [16, 16, 25], [30, 16, 47]],
+    [[9, 9, 10], [16, 16, 40], [30, 16, 99]],
+    [[9, 9, 10], [16, 16, 40], [30, 16, 99]],
   ];
 
   function preset(mode, level) {
@@ -85,6 +85,8 @@
       this.seed = 1;
       this.rng = new Rng(1);
       this.mines = 10;
+      // Only generate boards that logic alone solves from the first click (see makeSolvable).
+      this.solvable = true;
       this.type_total = [0, 0, 0, 0, 0];
       this.flags_of = [0, 0, 0, 0, 0];
       this.type_count = [0, 0, 0, 0, 0];
@@ -108,18 +110,26 @@
 
     validCell(cell) { return Number.isInteger(cell) && cell >= 0 && cell < this.n; }
 
+    // The neighbors of a cell, row by row. The lists are shared: do not modify them.
     nbrs(cell) {
-      const out = [];
-      if (!this.validCell(cell)) return out;
-      const W = this.w, H = this.h;
-      const r = Math.floor(cell / W), c = cell % W;
-      for (let rr = Math.max(r - 1, 0); rr <= Math.min(r + 1, H - 1); rr++) {
-        for (let cc = Math.max(c - 1, 0); cc <= Math.min(c + 1, W - 1); cc++) {
-          if (rr === r && cc === c) continue;
-          out.push(rr * W + cc);
+      if (!this.validCell(cell)) return [];
+      if (this.nbrCacheW !== this.w || this.nbrCacheH !== this.h) {
+        const W = this.w, H = this.h;
+        this.nbrCacheW = W; this.nbrCacheH = H;
+        this.nbrCache = [];
+        for (let k = 0; k < W * H; k++) {
+          const out = [];
+          const r = Math.floor(k / W), c = k % W;
+          for (let rr = Math.max(r - 1, 0); rr <= Math.min(r + 1, H - 1); rr++) {
+            for (let cc = Math.max(c - 1, 0); cc <= Math.min(c + 1, W - 1); cc++) {
+              if (rr === r && cc === c) continue;
+              out.push(rr * W + cc);
+            }
+          }
+          this.nbrCache.push(out);
         }
       }
-      return out;
+      return this.nbrCache[cell];
     }
     nbrMineCount(cell) { let k = 0; for (const j of this.nbrs(cell)) k += this.mine[j] !== 0; return k; }
     nbrFlagCount(cell) { let k = 0; for (const j of this.nbrs(cell)) k += this.flag[j] !== 0; return k; }
@@ -170,6 +180,17 @@
     }
 
     genBoard(start) {
+      if (!this.validCell(start)) return;
+      this.layMines(start);
+      if (this.solvable) makeSolvable(this, start);
+      this.computeClues();
+      this.countTypes();
+      this.open.fill(0, 0, this.n);
+      this.cascadeOpen([start]);
+    }
+
+    // Puts the mines at random positions (and of random types) outside the start cell's neighborhood.
+    layMines(start) {
       const n = this.n, W = this.w, H = this.h;
       this.mine.fill(0, 0, n);
       this.clue.fill(-1, 0, n);
@@ -204,9 +225,6 @@
         for (let k = 0; k < count; k++) this.mine[pool[k]] = 1 + this.rng.below(4);
       }
       this.mines = count;
-      this.computeClues();
-      this.countTypes();
-      this.cascadeOpen([start]);
     }
 
     computeClues() {
@@ -311,6 +329,8 @@
 
   // ---------------------------------------------------------------- Solver
   const COMPONENT_BUDGET = 50000, WINDOW_BUDGET = 10000, MAX_WINDOW_RADIUS = 2;
+  // The board generator only needs a quick, sound check; whatever this finds the full solver finds too.
+  const LOGIC_BUDGET = 300;
   const TYPE_BUDGET = 20000, REPAIR_BUDGET = 200000, FINAL_REPAIR_BUDGET = 5000000;
   const MAX_NBR = 8;
 
@@ -427,20 +447,52 @@
     }
   }
 
-  // Drops every value no combination of a constraint supports, until nothing changes.
-  // Returns false if the information is contradictory.
+  // The supported values of a constraint depend only on its target and on the domains of its
+  // variables, and the same few situations come up again and again, so they are remembered.
+  // Every domain is non-zero, so the base-32 digits identify the constraint size as well.
+  const supportCache = [new Map(), new Map()];
+  function supportOf(P, c) {
+    let key = 0;
+    for (let i = 0; i < c.n; i++) key = key * 32 + P.dom[c.vars[i]];
+    key = (key * 256 + (c.target + 64)) * 2 + (c.need_mine ? 1 : 0);
+    const map = supportCache[P.mode === MODE_HYPER ? 1 : 0];
+    let support = map.get(key);
+    if (support === undefined) {
+      support = new Array(MAX_NBR).fill(0);
+      supportDfs(P, c, 0, 0, 0, 0, new Array(MAX_NBR).fill(0), support);
+      if (map.size > 500000) map.clear();
+      map.set(key, support);
+    }
+    return support;
+  }
+
+  // Drops every value no combination of a constraint supports, until nothing changes. A constraint
+  // is only looked at again when a variable of it lost a value. Returns false if the information is
+  // contradictory.
   function propagate(P) {
-    for (let changed = true; changed;) {
-      changed = false;
-      for (const c of P.cons) {
-        const cur = new Array(MAX_NBR).fill(0);
-        const support = new Array(MAX_NBR).fill(0);
-        supportDfs(P, c, 0, 0, 0, 0, cur, support);
-        for (let i = 0; i < c.n; i++) {
-          const d = P.dom[c.vars[i]];
-          const nd = d & support[i];
-          if (nd === 0) return false;
-          if (nd !== d) { P.dom[c.vars[i]] = nd; changed = true; }
+    const nc = P.cons.length;
+    const ofVar = P.cell.map(() => []);
+    for (let ci = 0; ci < nc; ci++) {
+      const c = P.cons[ci];
+      for (let i = 0; i < c.n; i++) ofVar[c.vars[i]].push(ci);
+    }
+    const queued = new Uint8Array(nc).fill(1);
+    const work = [];
+    for (let ci = nc - 1; ci >= 0; ci--) work.push(ci);
+    while (work.length) {
+      const ci = work.pop();
+      queued[ci] = 0;
+      const c = P.cons[ci];
+      const support = supportOf(P, c);
+      for (let i = 0; i < c.n; i++) {
+        const d = P.dom[c.vars[i]];
+        const nd = d & support[i];
+        if (nd === 0) return false;
+        if (nd !== d) {
+          P.dom[c.vars[i]] = nd;
+          for (const other of ofVar[c.vars[i]]) {
+            if (!queued[other]) { queued[other] = 1; work.push(other); }
+          }
         }
       }
     }
@@ -622,6 +674,9 @@
       // Where the solver acted last (row, column; the board center after a clear step).
       this.lastR = 0;
       this.lastC = 0;
+      this.allowGuess = true;
+      this.logicOnly = false;  // set while solveByLogic runs
+      this.declined = false;  // analyze() found only a guess and was not allowed to make it
     }
     clone() {
       const s = new Solver();
@@ -630,6 +685,7 @@
       s.orientation = this.orientation;
       s.lastR = this.lastR;
       s.lastC = this.lastC;
+      s.allowGuess = this.allowGuess;
       return s;
     }
     setOrientation(o) { this.orientation = o & 7; }
@@ -751,11 +807,11 @@
       // flags go first, so enumerate even if safe cells are already known (but not to guess).
       let haveMine = extraMines.length > 0;
       for (let v = 0; v < nv; v++) haveMine = haveMine || F.mine[v] !== 0;
-      if (!decided || !haveMine) {
+      if (this.logicOnly ? !decided : (!decided || !haveMine)) {
         const { groups, groupOf } = components(P);
         const tooBig = [];
         groups.forEach((comp, ci) => {
-          const e = new Enumeration(P, comp, COMPONENT_BUDGET);
+          const e = new Enumeration(P, comp, this.logicOnly ? LOGIC_BUDGET : COMPONENT_BUDGET);
           e.sym = true;
           e.dfs(0);
           if (e.aborted) {
@@ -768,7 +824,7 @@
           }
         });
         // Components too big: enumerate small windows around each constraint instead.
-        if (!decided && !F.any && tooBig.length) {
+        if (!this.logicOnly && !decided && !F.any && tooBig.length) {
           const consOfComp = groups.map(() => []);
           P.cons.forEach((c, ci) => consOfComp[groupOf[c.vars[0]]].push(ci));
           for (let radius = 1; radius <= MAX_WINDOW_RADIUS && !F.any; radius++) {
@@ -799,6 +855,8 @@
           return true;
         }
       }
+
+      if (!this.allowGuess) { this.declined = true; return false; }
 
       // Level 4: guess.
       let exactMines = 0, otherCount = 0, bestV = -1;
@@ -859,6 +917,40 @@
     }
 
     // Advance one step and apply it to `g`. kind === KIND_NONE: nothing left to do.
+    // Plays g (which must be started) to the end by logic alone, without flags or guesses, and
+    // returns how many safe cells are still closed when nothing certain is left (0 = solved without
+    // a single guess). g is changed: it is played on.
+    solveByLogic(g) {
+      const keep = this.allowGuess;
+      this.allowGuess = false;
+      this.logicOnly = true;
+      this.queue = [];
+      this.marks.fill(0);
+      let safe = 0, opened = 0;
+      for (let i = 0; i < g.n; i++) safe += g.mine[i] === 0 ? 1 : 0;
+      const countOpen = () => { let k = 0; for (let i = 0; i < g.n; i++) k += g.open[i] !== 0 ? 1 : 0; return k; };
+      while (!g.over && (opened = countOpen()) < safe) {
+        this.declined = false;
+        if (!this.analyze(g)) break;
+        for (const m of this.queue) {
+          if (m.kind === KIND_FLAG) this.marks[m.cell] = 1;
+          else if (g.open[m.cell] === 0 && !g.over) g.reveal(m.cell);
+        }
+        this.queue = [];
+      }
+      this.allowGuess = keep;
+      this.logicOnly = false;
+      return safe - countOpen();
+    }
+
+    // After solveByLogic: the closed cells that logic could not decide (neither opened nor known to
+    // be a mine), in board order.
+    undecided(g) {
+      const out = [];
+      for (let i = 0; i < g.n; i++) if (g.open[i] === 0 && this.marks[i] === 0) out.push(i);
+      return out;
+    }
+
     step(g) {
       if (g.over) return makeMove(KIND_NONE, 0);
       if (!g.started) {
@@ -903,7 +995,9 @@
           this.lastC = m.cell % g.w;
           return m;
         }
+        this.declined = false;
         if (!this.analyze(g)) {
+          if (this.declined) return makeMove(KIND_NONE, 0);
           if (this.markCount() > 0) return cleared();  // the flags contradict the numbers
           break;
         }
@@ -918,6 +1012,91 @@
         return m;
       }
       return makeMove(KIND_NONE, 0);
+    }
+  }
+
+  // ---------------------------------------------------------------- Board generator
+  // Turns a random mine layout into one that logic alone can solve (port of cpp/src/generator.cpp;
+  // the same seed and first click give the same board). The layout is checked with the solver in
+  // its no-guess mode. While the solver gets stuck, a few mines near the place where it got stuck
+  // are moved or changed and the board is checked again; the change is kept when the number of
+  // safe cells left unsolved does not grow.
+  const MAX_EVALUATIONS = 20000;  // checks of one layout before starting over
+  const MAX_RESTARTS = 4;
+
+  // Plays the layout in g.mine out by logic alone on the scratch game t.
+  function checkLayout(g, t, start) {
+    t.mine.set(g.mine.subarray(0, g.n));
+    t.computeClues();
+    t.countTypes();
+    t.open.fill(0, 0, t.n);
+    t.flag.fill(0, 0, t.n);
+    t.cascadeOpen([start]);
+    t.started = true; t.over = false; t.win = false;
+    const solver = new Solver();
+    const v = { left: solver.solveByLogic(t), frontier: [], interior: [] };
+    if (v.left === 0) return v;
+    for (const c of solver.undecided(t)) {
+      let nextToOpen = false;
+      for (const j of t.nbrs(c)) nextToOpen = nextToOpen || t.open[j] !== 0;
+      (nextToOpen ? v.frontier : v.interior).push(c);
+    }
+    return v;
+  }
+
+  function improveLayout(g, start) {
+    const W = g.w;
+    const sr = Math.floor(start / W), sc = start % W;
+    const banned = (c) => Math.abs(Math.floor(c / W) - sr) <= 1 && Math.abs((c % W) - sc) <= 1;
+    let customTypes = false;
+    for (let t = 1; t <= 4; t++) customTypes = customTypes || g.type_count[t] !== 0;
+    const pick = (v) => v[g.rng.below(v.length)];
+    const t = g.clone();  // scratch game for the checks
+
+    let cur = checkLayout(g, t, start);
+    for (let evals = 1, tries = 0; cur.left !== 0 && evals < MAX_EVALUATIONS && tries < 20 * MAX_EVALUATIONS; tries++) {
+      const all = cur.frontier.concat(cur.interior);
+      if (all.length === 0) return false;
+      if (cur.frontier.length === 0) cur.frontier = all;
+      const cand = g.mine.slice();
+      const kind = g.rng.below(10);
+      if (kind < 5) {  // a mine off the border into the interior
+        const a = pick(cur.frontier);
+        const b = cur.interior.length === 0 ? pick(all) : pick(cur.interior);
+        if (cand[a] === 0 || cand[b] !== 0) continue;
+        const x = cand[a]; cand[a] = cand[b]; cand[b] = x;
+      } else if (kind < 7) {  // two cells of the border trade places
+        const a = pick(cur.frontier);
+        const b = pick(cur.frontier);
+        const x = cand[a]; cand[a] = cand[b]; cand[b] = x;
+      } else if (kind < 9) {  // another type for a mine
+        const a = pick(all);
+        if (cand[a] === 0 || customTypes) continue;
+        cand[a] = 1 + g.rng.below(4);
+      } else {  // a mine from anywhere onto the border
+        const a = pick(cur.frontier);
+        let b;
+        do { b = g.rng.below(g.n); } while (banned(b));
+        if (cand[a] !== 0 || cand[b] === 0) continue;
+        const x = cand[a]; cand[a] = cand[b]; cand[b] = x;
+      }
+      let same = true;
+      for (let i = 0; i < g.n && same; i++) same = cand[i] === g.mine[i];
+      if (same) continue;
+      const before = g.mine;
+      g.mine = cand;
+      const next = checkLayout(g, t, start);
+      evals++;
+      if (next.left <= cur.left) cur = next;
+      else g.mine = before;
+    }
+    return cur.left === 0;
+  }
+
+  function makeSolvable(g, start) {
+    for (let attempt = 0; ; attempt++) {
+      if (improveLayout(g, start) || attempt === MAX_RESTARTS) return;
+      g.layMines(start);
     }
   }
 
