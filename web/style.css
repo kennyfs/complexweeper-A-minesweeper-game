@@ -134,3 +134,5 @@ code { font-size: .95em; }
   .btn { min-height: 38px; }
   .delay { flex: 1 1 100%; justify-content: center; }
 }
+.source { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+.source a { color: inherit; }
