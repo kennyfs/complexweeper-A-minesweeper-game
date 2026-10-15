@@ -83,6 +83,18 @@ public:
     void setOrientation(int orientation) { orientation_ = orientation & 7; }
     int orientation() const { return orientation_; }
 
+    // When false the solver never guesses: step() returns kind == none instead, and nothing else
+    // changes. The board generator uses this to check that a board can be solved by logic alone.
+    void setAllowGuess(bool allow) { allow_guess_ = allow; }
+
+    // Plays `g` (which must be started) to the end by logic alone, without flags or guesses, and
+    // returns how many safe cells are still closed when nothing certain is left (0 = solved
+    // without a single guess). `g` is changed: it is played on.
+    std::size_t solveByLogic(Game& g);
+    // After solveByLogic: the closed cells that logic could not decide (neither opened nor known
+    // to be a mine), in board order.
+    std::vector<std::uint16_t> undecided(const Game& g) const;
+
     // Cells the solver has flagged as certain mines.
     bool isMarked(std::size_t cell) const { return cell < marks_.size() && marks_[cell] != 0; }
     std::size_t markCount() const;
@@ -112,6 +124,10 @@ private:
     // with the most open or flagged neighbors, then the closest one to the last move (ties: the lowest cell).
     Move takeNext(const Game& g);
     int orientation_ = 0;
+    bool allow_guess_ = true;
+    // Set while solveByLogic runs: only safe cells matter, and the search is kept small.
+    bool logic_only_ = false;
+    bool declined_ = false;  // analyze() found only a guess and was not allowed to make it
 };
 
 }  // namespace cw

@@ -6,6 +6,7 @@
 #include <bitset>
 #include <cstdlib>
 #include <numeric>
+#include <unordered_map>
 
 namespace cw {
 namespace {
@@ -16,6 +17,8 @@ namespace {
 constexpr std::uint64_t kComponentBudget = 50000;
 constexpr std::uint64_t kWindowBudget = 10000;
 constexpr int kMaxWindowRadius = 2;
+// The board generator only needs a quick, sound check; whatever this finds the full solver finds too.
+constexpr std::uint64_t kLogicBudget = 300;
 constexpr std::uint64_t kTypeBudget = 20000;
 constexpr std::uint64_t kRepairBudget = 200000;
 constexpr std::uint64_t kFinalRepairBudget = 5000000;
@@ -163,22 +166,56 @@ void supportDfs(const Problem& P, const Con& c, int k, int a, int b, int nz, std
     }
 }
 
+// The supported values of a constraint depend only on its target and on the domains of its
+// variables, and the same few situations come up again and again, so they are remembered.
+// Key: 8 domains of 5 bits (unused slots are 0), the target + 64 (8 bits) and need_mine (1 bit).
+std::array<std::uint8_t, kMaxNbr> supportOf(const Problem& P, const Con& c) {
+    thread_local std::array<std::unordered_map<std::uint64_t, std::array<std::uint8_t, kMaxNbr>>, 2> cache;
+    std::uint64_t key = 0;
+    for (int i = 0; i < c.n; ++i) key |= static_cast<std::uint64_t>(P.dom[static_cast<std::size_t>(c.vars[i])]) << (5 * i);
+    key |= static_cast<std::uint64_t>(c.target + 64) << 40;
+    key |= static_cast<std::uint64_t>(c.need_mine) << 48;
+    auto& map = cache[P.mode == Mode::hyper];
+    const auto it = map.find(key);
+    if (it != map.end()) return it->second;
+    std::array<int, kMaxNbr> cur{};
+    std::array<std::uint8_t, kMaxNbr> support{};
+    supportDfs(P, c, 0, 0, 0, 0, cur, support);
+    if (map.size() > 2000000) map.clear();
+    map.emplace(key, support);
+    return support;
+}
+
 // Enumerate the legal combinations of each constraint and drop every value no combination
 // supports, until nothing changes. Returns false if the information is contradictory.
 bool propagate(Problem& P) {
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (const Con& c : P.cons) {
-            std::array<int, kMaxNbr> cur{};
-            std::array<std::uint8_t, kMaxNbr> support{};
-            supportDfs(P, c, 0, 0, 0, 0, cur, support);
-            for (int i = 0; i < c.n; ++i) {
-                std::uint8_t& d = P.dom[c.vars[i]];
-                const auto nd = static_cast<std::uint8_t>(d & support[i]);
-                if (nd == 0) return false;
-                if (nd != d) {
-                    d = nd;
-                    changed = true;
+    // Worklist: a constraint only has to be looked at again when a variable of it lost a value.
+    // The fixpoint does not depend on the order.
+    const std::size_t nc = P.cons.size();
+    std::vector<std::vector<int>> of_var(P.dom.size());
+    for (std::size_t ci = 0; ci < nc; ++ci) {
+        for (int i = 0; i < P.cons[ci].n; ++i) of_var[static_cast<std::size_t>(P.cons[ci].vars[i])].push_back(static_cast<int>(ci));
+    }
+    std::vector<int> work(nc);
+    std::vector<char> queued(nc, 1);
+    for (std::size_t ci = 0; ci < nc; ++ci) work[ci] = static_cast<int>(nc - 1 - ci);  // popped from the back
+    while (!work.empty()) {
+        const int ci = work.back();
+        work.pop_back();
+        queued[static_cast<std::size_t>(ci)] = 0;
+        const Con& c = P.cons[static_cast<std::size_t>(ci)];
+        const auto support = supportOf(P, c);
+        for (int i = 0; i < c.n; ++i) {
+            std::uint8_t& d = P.dom[static_cast<std::size_t>(c.vars[i])];
+            const auto nd = static_cast<std::uint8_t>(d & support[i]);
+            if (nd == 0) return false;
+            if (nd != d) {
+                d = nd;
+                for (int other : of_var[static_cast<std::size_t>(c.vars[i])]) {
+                    if (!queued[static_cast<std::size_t>(other)]) {
+                        queued[static_cast<std::size_t>(other)] = 1;
+                        work.push_back(other);
+                    }
                 }
             }
         }
@@ -543,12 +580,12 @@ bool Solver::analyze(const Game& g) {
     // Certain flags go first, so enumerate even if safe cells are already known (but not to guess).
     bool have_mine = !extra_mines.empty();
     for (int v = 0; v < nv; ++v) have_mine = have_mine || F.mine[v] != 0;
-    if (!decided || !have_mine) {
+    if (logic_only_ ? !decided : (!decided || !have_mine)) {
         std::vector<int> group_of;
         const auto comps = components(P, group_of);
         std::vector<int> too_big;
         for (std::size_t ci = 0; ci < comps.size(); ++ci) {
-            Enumeration e(P, comps[ci], kComponentBudget);
+            Enumeration e(P, comps[ci], logic_only_ ? kLogicBudget : kComponentBudget);
             e.sym = true;
             e.dfs(0);
             if (e.aborted) {
@@ -563,7 +600,7 @@ bool Solver::analyze(const Game& g) {
         // Components too big for the budget: enumerate small windows around each constraint
         // instead, widening the window until something is found. A window is a relaxation, so
         // what it proves is certain, but its probabilities are not trustworthy and are not used.
-        if (!decided && !F.any && !too_big.empty()) {
+        if (!logic_only_ && !decided && !F.any && !too_big.empty()) {
             std::vector<std::vector<int>> cons_of_comp(comps.size());
             for (std::size_t ci = 0; ci < P.cons.size(); ++ci) {
                 cons_of_comp[group_of[P.cons[ci].vars[0]]].push_back(static_cast<int>(ci));
@@ -606,6 +643,11 @@ bool Solver::analyze(const Game& g) {
             queue_.insert(queue_.end(), opens.begin(), opens.end());
             return true;
         }
+    }
+
+    if (!allow_guess_) {
+        declined_ = true;
+        return false;
     }
 
     // Level 4: guess. Frontier cells with an exact probability use it. Everything else (cells
@@ -695,6 +737,37 @@ Move Solver::takeNext(const Game& g) {
     return m;
 }
 
+std::size_t Solver::solveByLogic(Game& g) {
+    const bool keep = allow_guess_;
+    allow_guess_ = false;
+    logic_only_ = true;
+    queue_.clear();
+    marks_.fill(0);
+    while (!g.over && g.openedCount() < g.safeCount()) {
+        declined_ = false;
+        if (!analyze(g)) break;
+        for (const Move& m : queue_) {
+            if (m.kind == MoveKind::mark) {
+                marks_[m.cell] = 1;
+            } else if (g.open[m.cell] == 0 && !g.over) {
+                g.reveal(m.cell);
+            }
+        }
+        queue_.clear();
+    }
+    allow_guess_ = keep;
+    logic_only_ = false;
+    return g.safeCount() - g.openedCount();
+}
+
+std::vector<std::uint16_t> Solver::undecided(const Game& g) const {
+    std::vector<std::uint16_t> out;
+    for (std::size_t i = 0; i < g.n; ++i) {
+        if (g.open[i] == 0 && marks_[i] == 0) out.push_back(static_cast<std::uint16_t>(i));
+    }
+    return out;
+}
+
 Move Solver::step(Game& g, std::uint32_t now_ms) {
     if (g.over) return {};
     if (!g.started) {
@@ -744,7 +817,9 @@ Move Solver::step(Game& g, std::uint32_t now_ms) {
             last_c_ = static_cast<double>(m.cell % g.w);
             return m;
         }
+        declined_ = false;
         if (!analyze(g)) {
+            if (declined_) return {};
             if (markCount() > 0) return cleared();  // the flags contradict the numbers
             break;
         }
