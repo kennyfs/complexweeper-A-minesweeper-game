@@ -1,6 +1,8 @@
 // Complexweeper rules and state implementation
 #include "game.hpp"
 
+#include "generator.hpp"
+
 #include <algorithm>
 #include <cstdlib>
 
@@ -177,6 +179,16 @@ void Game::startAt(std::size_t cell, std::uint32_t now_ms) {
 
 void Game::genBoard(std::size_t start) {
     if (!validCell(start)) return;
+    layMines(start);
+    if (solvable) makeSolvable(*this, start);
+    computeClues();
+    countTypes();
+    std::fill_n(open.begin(), n, 0);
+    const std::uint16_t seeds[] = {static_cast<std::uint16_t>(start)};
+    cascadeOpen(seeds);
+}
+
+void Game::layMines(std::size_t start) {
     std::fill_n(mine.begin(), n, 0);
     std::fill_n(clue.begin(), n, -1);
     std::fill_n(open.begin(), n, 0);
@@ -222,10 +234,6 @@ void Game::genBoard(std::size_t start) {
         }
     }
     mines = static_cast<std::uint16_t>(count);
-    computeClues();
-    countTypes();
-    const std::uint16_t seeds[] = {static_cast<std::uint16_t>(start)};
-    cascadeOpen(seeds);
 }
 
 void Game::computeClues() {

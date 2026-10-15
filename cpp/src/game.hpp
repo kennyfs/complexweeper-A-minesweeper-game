@@ -37,25 +37,17 @@ struct Preset {
     std::string_view label;
 };
 
-// The three difficulties of each mode. The mine counts were tuned with tools/tune_mines.py so that
-// the solver wins about 90% (Beginner), 80% (Intermediate) and 70% (Expert) of its games. A human
-// wins less often than the solver, since the solver guesses at the lowest risk and also finds a
-// consistent flag labeling perfectly. Measured with 2000-4000 games each (95% Wilson interval):
-//   complex    Beginner  7 mines 92.0% [91.1, 92.8]   Intermediate 24 mines 81.8% [80.0, 83.4]
-//              Expert   47 mines 69.0% [66.9, 70.9]
-//   Minkowski  Beginner  8 mines 87.5% [86.4, 88.4]   Intermediate 25 mines 79.0% [77.2, 80.7]
-//              Expert   47 mines 70.1% [68.1, 72.1]
-// A Beginner board has only 81 cells, so one mine more or less moves the win rate by about 5
-// points; these are the counts closest to 90%.
+// The three difficulties of each mode, with the mine counts of the classic game. Boards are
+// generated so that logic alone solves them (see generator.hpp), so these can be dense.
 inline constexpr std::array<Preset, 3> PRESETS_COMPLEX{{
-    {9, 9, 7, "Beginner"},
-    {16, 16, 24, "Intermediate"},
-    {30, 16, 47, "Expert"},
+    {9, 9, 10, "Beginner"},
+    {16, 16, 40, "Intermediate"},
+    {30, 16, 99, "Expert"},
 }};
 inline constexpr std::array<Preset, 3> PRESETS_HYPER{{
-    {9, 9, 8, "Beginner"},
-    {16, 16, 25, "Intermediate"},
-    {30, 16, 47, "Expert"},
+    {9, 9, 10, "Beginner"},
+    {16, 16, 40, "Intermediate"},
+    {30, 16, 99, "Expert"},
 }};
 constexpr const std::array<Preset, 3>& presets(Mode mode) {
     return mode == Mode::hyper ? PRESETS_HYPER : PRESETS_COMPLEX;
@@ -136,6 +128,9 @@ public:
     std::uint32_t seed = 1;
     Rng rng{1};
     std::uint16_t mines = 10;
+    // Generate only boards that can be solved by logic alone from the first click (no guess is ever
+    // needed). Turn it off to get plain random boards, which often need guesses.
+    bool solvable = true;
     // Number of mines of each type (indices 1..4), public from the start of the game.
     std::array<std::uint16_t, 5> type_total{};
     std::array<std::uint16_t, 5> flags_of{};
@@ -175,8 +170,12 @@ public:
     // The first click: reseeds the generator, lays the mines, computes the clues and cascades
     // from the clicked cell.
     void startAt(std::size_t cell, std::uint32_t now_ms);
-    // Lays mines and computes clues. The start cell and its neighbors are guaranteed mine-free.
+    // Lays mines (see layMines), makes the board solvable by logic if `solvable` is set, computes the
+    // clues and opens the start cell. The start cell and its neighbors are guaranteed mine-free.
     void genBoard(std::size_t start);
+    // Puts the mines at random positions (and of random types) outside the start cell's
+    // neighborhood. Leaves the clues alone.
+    void layMines(std::size_t start);
     void computeClues();
     void countTypes();
 

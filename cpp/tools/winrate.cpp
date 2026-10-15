@@ -1,6 +1,9 @@
 // Measures how often the solver wins a given board setup.
 //
-//   winrate <mode 0|1> <width> <height> <mines> <games> <threads> [first_seed] [orientation|random]
+//   winrate <mode 0|1> <width> <height> <mines> <games> <threads> [first_seed] [orientation|random] [plain]
+//
+// By default the boards come from the generator and need no guess, so the solver wins them all.
+// Add `plain` as the last argument for plain random boards, where the solver has to guess.
 //
 // Prints one line: wins games stuck games_with_reorientation guesses steps
 // Every game is independent (seed = first_seed + game index), so the games are spread over the
@@ -16,7 +19,7 @@
 
 int main(int argc, char** argv) {
     if (argc < 7) {
-        std::fprintf(stderr, "usage: %s <mode 0|1> <w> <h> <mines> <games> <threads> [first_seed] [orientation|random]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <mode 0|1> <w> <h> <mines> <games> <threads> [first_seed] [orientation|random] [plain]\n", argv[0]);
         return 2;
     }
     const cw::Mode mode = std::atoi(argv[1]) == 1 ? cw::Mode::hyper : cw::Mode::complex;
@@ -27,11 +30,14 @@ int main(int argc, char** argv) {
     const bool random_orientation = argc > 8 && std::strcmp(argv[8], "random") == 0;
     const int fixed_orientation = argc > 8 && !random_orientation ? std::atoi(argv[8]) : 0;
 
+    const bool plain = argc > 9 && std::strcmp(argv[9], "plain") == 0;
+
     std::atomic<int> next{0}, wins{0}, stuck{0}, reoriented{0};
     std::atomic<long> guesses{0}, steps{0};
     const auto worker = [&] {
         for (int k = next++; k < games; k = next++) {
             cw::Session s;
+            s.game.solvable = !plain;
             const std::uint32_t seed = seed0 + static_cast<std::uint32_t>(k);
             s.setSolverOrientation(random_orientation ? static_cast<int>(seed % 8) : fixed_orientation);
             s.newGame(static_cast<std::uint16_t>(w), static_cast<std::uint16_t>(h), static_cast<std::uint16_t>(mines),

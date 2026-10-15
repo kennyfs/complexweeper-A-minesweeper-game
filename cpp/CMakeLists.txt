@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Pure logic library (rules + solver + undo history; no GUI, no third-party dependencies)
-add_library(complexweeper_core STATIC src/game.cpp src/solver.cpp src/session.cpp)
+add_library(complexweeper_core STATIC src/game.cpp src/generator.cpp src/solver.cpp src/session.cpp)
 target_include_directories(complexweeper_core PUBLIC src)
 target_compile_options(complexweeper_core PRIVATE -Wall -Wextra -Wpedantic)
 
@@ -25,7 +25,7 @@ add_executable(solver_test tests/solver_test.cpp)
 target_link_libraries(solver_test PRIVATE complexweeper_core)
 add_test(NAME solver_test COMMAND solver_test)
 
-# Command line tool that measures the solver's win rate (used by tools/tune_mines.py)
+# Command line tool that measures the solver's win rate
 find_package(Threads REQUIRED)
 add_executable(winrate tools/winrate.cpp)
 target_link_libraries(winrate PRIVATE complexweeper_core Threads::Threads)

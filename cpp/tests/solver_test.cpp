@@ -38,11 +38,12 @@ struct Stats {
 };
 
 // Plays whole games and verifies every step on the way.
-Stats playOut(const Config& cfg, std::uint32_t seed_from, int count) {
+Stats playOut(const Config& cfg, std::uint32_t seed_from, int count, bool solvable) {
     Stats st;
     for (int k = 0; k < count; ++k) {
         Session s;
         s.setSolverOrientation(k % 8);  // cover every orientation
+        s.game.solvable = solvable;
         s.newGame(cfg.w, cfg.h, cfg.mines, cfg.mode, seed_from + static_cast<std::uint32_t>(k));
         ++st.games;
         bool retyped = false;
@@ -75,6 +76,7 @@ Stats playOut(const Config& cfg, std::uint32_t seed_from, int count) {
     return st;
 }
 
+// Plain random boards: the solver has to guess now and then, and everything it does must be sound.
 void testSoundness() {
     const Config cfgs[] = {
         {"beginner", 9, 9, 10, Mode::complex},          {"intermediate", 16, 16, 40, Mode::complex},
@@ -83,7 +85,7 @@ void testSoundness() {
     };
     for (const Config& cfg : cfgs) {
         const auto t0 = std::chrono::steady_clock::now();
-        const Stats st = playOut(cfg, 1000, cfg.w >= 30 ? 15 : (cfg.w >= 16 ? 40 : 100));
+        const Stats st = playOut(cfg, 1000, cfg.w >= 30 ? 15 : (cfg.w >= 16 ? 40 : 100), false);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         std::printf("  %-17s %3d games: won %3d lost %3d stuck %d | %d steps (open %d, flag %d, guess %d, risk>50%%: %d) | "
                     "re-oriented in %d games | %.0f ms\n",
@@ -96,6 +98,47 @@ void testSoundness() {
         expect(st.losses <= st.guesses, "no guesses means no losses");
         expect(st.risky_guesses * 10 <= st.guesses, "a guess is rarely worse than a coin flip (<= 10% of guesses)");
     }
+}
+
+// The generator: every board it makes is solved by logic alone, from the first click, at the
+// classic mine counts, and the same seed gives the same board.
+void testGenerator() {
+    const Config cfgs[] = {
+        {"beginner", 9, 9, 10, Mode::complex},          {"intermediate", 16, 16, 40, Mode::complex},
+        {"expert", 30, 16, 99, Mode::complex},          {"beginner (Mink.)", 9, 9, 10, Mode::hyper},
+        {"intermed. (Mink.)", 16, 16, 40, Mode::hyper}, {"expert (Mink.)", 30, 16, 99, Mode::hyper},
+    };
+    for (const Config& cfg : cfgs) {
+        const auto t0 = std::chrono::steady_clock::now();
+        const int games = cfg.w >= 30 ? 20 : (cfg.w >= 16 ? 50 : 100);
+        const Stats st = playOut(cfg, 5000, games, true);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("  %-17s %3d games: won %3d lost %3d stuck %d guesses %d | %.0f ms\n", cfg.label, st.games, st.wins,
+                    st.losses, st.stuck, st.guesses, ms);
+        expect(st.guesses == 0, "a generated board never needs a guess");
+        expect(st.wins == st.games, "the solver wins every generated board");
+        expect(st.certain_wrong == 0 && st.bad_flags == 0, "generated boards: all steps sound");
+    }
+    // Same seed and first click, same board; another first click still gives a solvable board.
+    Game a, b;
+    for (Game* g : {&a, &b}) {
+        g->w = 16;
+        g->h = 16;
+        g->mines = 40;
+        g->newGame(77);
+        g->startAt(37, 0);
+    }
+    expect(a.mine == b.mine, "the generator is deterministic");
+    Session s;
+    s.newGame(16, 16, 40, Mode::complex, 78);
+    s.click(5, 0);  // a corner-ish first click chosen by the player, not the solver
+    int guesses = 0;
+    for (int i = 0; i < 2000 && !s.game.over; ++i) {
+        const Move m = s.solverStep(0);
+        if (m.kind == MoveKind::none) break;
+        guesses += m.reason == Reason::guess;
+    }
+    expect(guesses == 0 && s.game.win, "a board made for another first click is solved without a guess too");
 }
 
 struct Frozen {
@@ -348,6 +391,7 @@ void testLastFlagOrientation() {
 int main() {
     std::printf("Complexweeper solver self-test\n==============================\n");
     testSoundness();
+    testGenerator();
     testUndo();
     testStepGranularity();
     testOrientation();

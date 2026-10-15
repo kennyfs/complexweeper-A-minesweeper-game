@@ -60,6 +60,7 @@ void buildBoard(Game& g, std::uint16_t w, std::uint16_t h, std::uint16_t mines, 
     g.h = h;
     g.mines = mines;
     g.type_count = tc;
+    g.solvable = false;  // the rule tests want plain random boards (the generator has its own tests)
     g.newGame(seed);
     g.startAt(start, 0);
 }
