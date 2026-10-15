@@ -85,14 +85,14 @@ on it.
 | path | contents |
 | --- | --- |
 | `cpp/src/game.*` | the rules and the game state (no GUI, no third-party libraries) |
+| `cpp/src/generator.*` | the board generator that makes every board solvable by logic |
 | `cpp/src/solver.*` | the solver |
 | `cpp/src/session.*` | game + solver + undo history |
 | `cpp/src/capi.*` | a C interface, built as a shared library for the GUI |
 | `cpp/tests/` | the rule tests and the solver tests |
-| `cpp/tools/winrate.cpp` | multithreaded win-rate measurement of the solver |
+| `cpp/tools/winrate.cpp` | multithreaded win-rate measurement of the solver (for plain random boards, add `plain`) |
 | `gui/` | the tkinter GUI (Python, talks to the C++ library through `ctypes`) |
 | `web/` | the static web version (plain HTML/CSS/JS, no build step; a JavaScript port of `cpp/src`) |
-| `tools/tune_mines.py` | tunes the number of mines for a target win rate |
 | `assets/sprites.json` | the vector sprites used by the GUI and the web version (generated) |
 | `tools/make_sprites.py` | draws the sprites in code and writes `assets/sprites.json` and `web/sprites-data.js` |
 
@@ -164,7 +164,8 @@ constraint on its neighbors. To decide the next move it tries, from cheap to exp
    symmetry breaking. A group that is too big is searched in small windows around each constraint
    instead; what holds for some of the constraints also holds for all of them.
 4. **A guess**, if nothing is certain: the closed cell with the lowest estimated probability of
-   being a mine.
+   being a mine. Generated boards never need one, but the solver still guesses on plain random
+   boards and when you make moves of your own.
 
 The flags it places are real, typed flags. A new flag gets the first type that still lets every
 open number be satisfied, and when a newly opened number shows that two groups of flags were
@@ -176,29 +177,33 @@ them again, and they count against the number of mines left. A wrong type is re-
 other. If your flags contradict the numbers (too many flags, or no consistent reading), the solver
 removes **all** flags in one step and carries on from the plain board; undo brings them back.
 
+## Board generation
+
+The board is laid out on your first click, so the first click and its eight neighbors never
+contain a mine. Every generated board can then be solved **by logic alone, from that first click,
+without a single guess**: the numbers always determine every mine and every safe cell, up to the
+equivalent labelings described above.
+
+The generator lays the mines at random, plays the board with the solver in a no-guess mode and,
+while the solver gets stuck, moves or changes a few mines near the place where it got stuck (mostly
+moving a mine from the border of the stuck region into the unknown interior) and plays again. A
+change is kept when the number of safe cells left unsolved does not grow. The check uses a reduced
+version of the solver (small search budget, no flags), so whatever it can solve the full solver
+solves too. Everything is driven by the seed, so the same seed and first click give the same board.
+
+Plain random boards, where this is switched off (`Game::solvable = false`), are far from solvable
+at these densities: on Intermediate the solver wins only about 10% of them.
+
 ### Difficulty presets
 
-The mine counts were tuned with `tools/tune_mines.py` so that the solver wins about 90% of its
-games on Beginner, 80% on Intermediate and 70% on Expert. A human wins less often than the
-solver, because the solver guesses at the lowest possible risk and always finds a consistent flag
-labeling. Win rates measured with 2000 to 4000 games per entry:
+The presets use the mine counts of the classic game in both modes:
 
-| mode | Beginner (9×9) | Intermediate (16×16) | Expert (30×16) |
-| --- | --- | --- | --- |
-| circular complex | 7 mines, 92.0% | 24 mines, 81.8% | 47 mines, 69.0% |
-| Minkowski | 8 mines, 87.5% | 25 mines, 79.0% | 47 mines, 70.1% |
+| Beginner | Intermediate | Expert |
+| --- | --- | --- |
+| 9×9, 10 mines | 16×16, 40 mines | 30×16, 99 mines |
 
-On the 81-cell Beginner board one mine more or less moves the win rate by about 5 points, so no
-count hits 90% exactly; these are the closest ones. The presets live in `cpp/src/game.hpp`.
-
-To tune them again (for example after changing the solver), run:
-
-```bash
-python3 tools/tune_mines.py --total-threads 12 --json tuned.json --log tuning_log.jsonl
-```
-
-All configurations share one hard budget of worker threads. Every evaluation is appended to the
-log, so a partial run is not lost. Use `--targets` to choose other target win rates.
+Generating a board takes a moment on the largest preset: about 0.2 s (C++) and 1 s (JavaScript,
+at most a few seconds) on Expert, much less on the others.
 
 ## Graphics and license
 
